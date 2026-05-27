@@ -3,6 +3,9 @@ const sidebars = {
   docsSidebar: [
     'index',
     'architecture',
+    'math-engine',
+    'hal-and-boot',
+    'runtime-and-ui',
     'hacking',
     'contributing',
     'roadmap',
