@@ -5,7 +5,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 const config = {
   title: 'NumCore',
   tagline: 'Bare-metal scientific calculator firmware for ARM Cortex-M3',
-  favicon: 'img/favicon.png',
+  favicon: 'img/logo.svg',
 
   url: 'https://numcore.github.io',
   baseUrl: '/',
@@ -46,12 +46,12 @@ const config = {
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
-      image: 'img/logo.png',
+      image: 'img/logo.svg',
       navbar: {
         title: 'NumCore',
         logo: {
           alt: 'NumCore Logo',
-          src: 'img/logo.png',
+          src: 'img/logo.svg',
         },
         items: [
           {
