@@ -1,6 +1,0 @@
-title: NumCore
-description: Bare-metal scientific calculator firmware for ARM Cortex-M3
-theme: jekyll-theme-cayman
-show_downloads: false
-github:
-  is_project_page: false
