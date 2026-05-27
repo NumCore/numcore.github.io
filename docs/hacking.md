@@ -266,18 +266,19 @@ def to_q3132(x):
     return round(x * SCALE)
 
 # Constants from fixed_point.rs
-FIXED_ONE   = to_q3132(1.0)
-PI          = to_q3132(math.pi)
-E           = to_q3132(math.e)
-LN_2        = to_q3132(math.log(2))
-CORDIC_GAIN = to_q3132(math.prod(math.cos(math.atan(2**-i)) for i in range(24)))
+FIXED_PI      = to_q3132(math.pi)
+FIXED_E       = to_q3132(math.e)
+FIXED_LN2     = to_q3132(math.log(2))
+CORDIC_GAIN   = to_q3132(math.prod(math.cos(math.atan(2**-i)) for i in range(24)))
+FIXED_PI_OVER_180  = to_q3132(math.pi / 180)
+FIXED_180_OVER_PI  = to_q3132(180 / math.pi)
 
 # Verify: Q31.32 → float
 def from_q3132(x):
     return x / SCALE
 
-print(from_q3132(PI))          # 3.141592653589793
-print(from_q3132(E))           # 2.718281828459045
+print(from_q3132(FIXED_PI))             # 3.141592653589793
+print(from_q3132(FIXED_E))              # 2.718281828459045
 ```
 
 ## LN_FACTORIAL_TABLE values
@@ -387,36 +388,32 @@ arm-none-eabi-nm -S --size-sort target/thumbv7m-none-eabi/debug/NumCore | tail -
 
 ## Adding a new math function
 
-1. **Add the function name to the lexer** (`numcore/src/math/lexer.rs`):
-   - The lexer emits individual `Identifier` tokens; the parser reassembles
-     them into function names. No lexer change needed for new names of 3+
-     letters that don't collide with existing prefixes.
+1. **Add the function token to the lexer** (`numcore/src/math/lexer.rs`):
+   - Add a new `Token::Func*` variant to the `Token` enum
+   - Add a match arm in `parse_identifier()` that maps the lowercase function
+     name string directly to the new token. There is no `Identifier` token —
+     the lexer emits the specific function token in one step.
 
-2. **Add the AST node variant** (`numcore/src/math/parser.rs`):
-   - Add the new function to the `Function` enum
-   - Add the string match in `parse_identifier()` — this function checks
-     consecutive identifier tokens against known function names
-   - Functions are case-sensitive, lowercase
+2. **Add the AST enum variant** (`numcore/src/math/parser.rs`):
+   - Add the new function to `MathFunction` (single-argument), `TwoArgMathFunction`
+     (two-argument), or `ThreeArgMathFunction` (three-argument) enum
+   - Wire the token→AST mapping in the parser's function-parsing logic
 
-3. **Add the function enum** (`numcore/src/math/evaluator.rs`):
-   - Add variant to `OneArgMathFunction` or `TwoArgMathFunction`
-   - Implement the logic in `apply_one_arg_function()` or
-     `apply_two_arg_function()`
-
-4. **Implement the maths** (`numcore/src/math/fixed_point.rs` or
+3. **Implement the maths** (`numcore/src/math/fixed_point.rs` or
    `distributions.rs`):
    - Write the Q31.32 fixed-point implementation
-   - Handle domain errors by returning `None`
+   - Handle domain errors by returning `Option` (`None` means error)
    - Handle overflow/underflow at Q31.32 boundaries
 
-5. **Wire to evaluator** (`numcore/src/math/evaluator.rs`):
-   - Match the function enum variant in the appropriate apply function
-   - Call through `Complex::` or `fp::` implementation
+4. **Wire to the evaluator** (`numcore/src/math/evaluator.rs`):
+   - Add the match arm in `apply_function()`, `apply_two_arg_function()`, or
+     `apply_three_arg_function()`
+   - Call through `fp::`, `Complex::`, or `distributions::` implementation
 
-6. **Add to welcome banner** (`numcore/src/runtime/mod.rs`):
+5. **Add to welcome banner** (`numcore/src/runtime/mod.rs`):
    - Add the function name to `print_welcome_banner()`
 
-7. **Add tests** (`test-suite/tests/math.rs`):
+6. **Add tests** (`test-suite/tests/math.rs`):
    - Expected values for representative inputs
    - Domain errors (invalid inputs)
    - Overflow/underflow at boundaries
@@ -434,13 +431,13 @@ No changes to `numcore/` required.
 
 ## Mathematical constant definitions
 
-| Constant       | Q31.32 hex          | Q31.32 decimal     | Float equivalent  |
-|----------------|---------------------|-------------------|-------------------|
-| FIXED_ONE      | 0x0000_0001_0000_0000 | 4,294,967,296    | 1.0               |
-| PI             | 0x0000_0003_243F_6A89 | 13,773,379,209   | 3.1415926535      |
-| E              | 0x0000_0002_B7E1_5163 | 11,676,924,259   | 2.7182818284      |
-| HALF_PI        | 0x0000_0001_921F_B544 | 6,886,689,604    | 1.5707963267      |
-| LN_2           | 0x0000_0000_B172_17F8 | 2,979,496,312    | 0.6931471805      |
-| CORDIC_GAIN    | 0x0000_0001_5B97_7CD6 | 5,828,261,334    | 1.3572343318      |
-| DEG_TO_RAD     | 0x0000_0000_0477_D1A9 | 75,071,401       | 0.0174532925      |
-| RAD_TO_DEG     | 0x0000_0000_394B_B8CC | 959,175,884      | 57.2957795130     |
+| Constant           | Q31.32 hex               | Q31.32 decimal       | Float equivalent  |
+|--------------------|--------------------------|----------------------|-------------------|
+| FIXED_ONE          | 0x0000_0001_0000_0000    | 4,294,967,296        | 1.0               |
+| FIXED_PI           | 0x0000_0003_243F_6A89    | 13,493,037,705       | 3.1415926535      |
+| FIXED_E            | 0x0000_0002_B7E1_5163    | 11,674,931,555       | 2.7182818284      |
+| FIXED_PI_OVER_2    | 0x0000_0001_921F_B544    | 6,746,518,852        | 1.5707963267      |
+| FIXED_LN2          | 0x0000_0000_B172_17F8    | 2,977,044,472        | 0.6931471805      |
+| CORDIC_GAIN        | 0x0000_0000_9B74_EDA8    | 2,608,131,496        | 0.6072529350      |
+| FIXED_PI_OVER_180  | 0x0000_0000_0477_D1A9    | 74,961,321           | 0.0174532925      |
+| FIXED_180_OVER_PI  | 0x0000_0039_4BB8_34C8    | 246,083,499,208      | 57.2957795130     |

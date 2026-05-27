@@ -61,7 +61,7 @@ The UI layer is generic over `<D: Display>` and contains zero unsafe code. It li
 
 ### Font (font.rs)
 
-A 5×7 monospace bitmap font stored as one byte per column (5 bits used per byte). The table holds 95 glyphs covering ASCII 0x20 (space) through 0x7E (tilde), each glyph stored as 5 bytes for a total of 475 bytes in `.rodata`. Characters outside this range render as a solid 5×7 replacement block. The effective advance width is 6 pixels per character (5 glyph columns + 1 pixel gap), giving 16 characters per 96-pixel line.
+A 5×7 monospace bitmap font stored as one byte per row (5 bits used per byte). The table holds 95 glyphs covering ASCII 0x20 (space) through 0x7E (tilde), each glyph stored as 7 bytes for a total of 665 bytes in `.rodata`. Characters outside this range render as a solid 5×7 replacement block. The effective advance width is 6 pixels per character (5 glyph columns + 1 pixel gap), giving 16 characters per 96-pixel line.
 
 ### Display Layout
 
