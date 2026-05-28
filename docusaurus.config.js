@@ -7,7 +7,7 @@ const config = {
   tagline: 'Bare-metal scientific calculator firmware for ARM Cortex-M3',
   favicon: 'img/logo.svg',
 
-  url: 'https://numcore.github.io',
+  url: 'https://numcore.tech',
   baseUrl: '/',
 
   organizationName: 'NumCore',
