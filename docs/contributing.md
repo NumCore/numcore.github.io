@@ -92,17 +92,11 @@ All math functions must:
 
 ## Testing
 
-### Host-side suite (270 tests)
+### Host-side suite (275 tests)
 
 ```bash
 # All tests
 cargo test -p numcore_math --tests
-
-# Single test
-cargo test -p numcore_math --tests test_sin_standard_angles
-
-# All tests with output
-cargo test -p numcore_math --tests -- --nocapture
 ```
 
 ### Adding new tests
@@ -163,7 +157,7 @@ echo "my_function(42)" | cargo run -p numcore-lm3s811 --release --target thumbv7
 ### CI pipeline
 
 GitHub Actions runs on every PR:
-1. `cargo test -p numcore_math --tests` -- all 270 tests
+1. `cargo test -p numcore_math --tests` -- all 275 tests
 2. `cargo build -p numcore-lm3s811 --release --target thumbv7m-none-eabi` -- firmware builds
 
 ## Pull request process

@@ -80,9 +80,9 @@ NumCore/
 │   └── src/
 │       ├── main.rs               # Calls boot::Reset (via entry!)
 │       └── boot.rs               # Vector table, Reset handler
-└── test-suite/                   # Host-side test crate
-    ├── Cargo.toml
-    └── tests/math.rs             # 276 tests (270 active)
+    └── test-suite/                   # Host-side test crate
+        ├── Cargo.toml
+        └── tests/math.rs             # 281 tests (275 active)
 ```
 
 | Member            | Target                  | Purpose                          |

@@ -26,12 +26,13 @@ description: Past milestones and future development plans
 - [x] Degrees mode (Ctrl+D toggle) with angle conversion rules
 - [x] Scrollable results on 96x16 OLED
 - [x] Cursor-based input editing
-- [x] Host-side unit test suite (276 tests, 270 active)
+- [x] Host-side unit test suite (281 tests, 275 active)
 - [x] CI pipeline: host-side tests on every PR
 - [x] Dedicated documentation site (Docusaurus, GitHub Pages)
 - [x] Memory optimisation: Flash 77% to 82%, stack headroom
 - [x] zero-unsafe rule enforced in math/runtime/ui
 - [x] Overflow detection in complex paths (Smith's division)
+- [x] Overflow-aware scientific notation display (EvalResult enum, format_overflow, binary op adjustment)
 - [x] floor/ceil/round functions for user expressions
 
 ## Short-term
