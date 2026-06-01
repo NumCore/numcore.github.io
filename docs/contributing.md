@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 7
 description: Development setup, coding standards, testing, PR process
 ---
 
@@ -40,7 +40,7 @@ The workspace root `.cargo/config.toml` does **not** set a default build target
 ```
 
 **JetBrains RustRover:** Set default target to `thumbv7m-none-eabi` in
-**Settings → Languages & Frameworks → Rust → Cargo**.
+**Settings $\to$ Languages & Frameworks $\to$ Rust $\to$ Cargo**.
 
 ## Code conventions
 
@@ -92,7 +92,7 @@ All math functions must:
 
 ## Testing
 
-### Host-side suite (255 tests)
+### Host-side suite (270 tests)
 
 ```bash
 # All tests
@@ -163,7 +163,7 @@ echo "my_function(42)" | cargo run -p numcore-lm3s811 --release --target thumbv7
 ### CI pipeline
 
 GitHub Actions runs on every PR:
-1. `cargo test -p numcore_math --tests` -- all 255 tests
+1. `cargo test -p numcore_math --tests` -- all 270 tests
 2. `cargo build -p numcore-lm3s811 --release --target thumbv7m-none-eabi` -- firmware builds
 
 ## Pull request process

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 8
 description: Past milestones and future development plans
 ---
 
@@ -7,13 +7,13 @@ description: Past milestones and future development plans
 
 ## Milestone: Core foundation (v0.1 -- v0.4) -- complete
 
-- [x] Math engine: Q31.32 fixed-point with CORDIC, Taylor, Newton-Raphson
+- [x] Math engine: Q31.32 fixed-point with CORDIC, minimax, CLZ sqrt, rational atan2
 - [x] Lexer: expression string to typed token stream (max 32 tokens)
 - [x] Parser: recursive-descent PEMDAS with implicit multiplication, flat-arena AST (max 64 nodes)
 - [x] Evaluator: full operator/function dispatch, sum/int loop aggregates
-- [x] Complex numbers: arithmetic + all transcendental functions
+- [x] Complex numbers: Smith's robust division, all transcendental functions
 - [x] Variable storage: Ans + 26 registers A-Z, copy-on-read for loop shadowing
-- [x] Statistical distributions: log-gamma, log-factorial, binomial, Poisson, chi-squared CDF
+- [x] Statistical distributions: Stirling log-gamma, log-factorial, binomial, Poisson, chi-squared CDF
 - [x] Boot layer: vector table, .bss/.data init, Reset handler
 - [x] HAL: UART, I2C, GPIO, clock, OLED driver (SSD0303)
 - [x] Runtime: event loop, state machine, ANSI escape sequence parser
@@ -26,11 +26,13 @@ description: Past milestones and future development plans
 - [x] Degrees mode (Ctrl+D toggle) with angle conversion rules
 - [x] Scrollable results on 96x16 OLED
 - [x] Cursor-based input editing
-- [x] Host-side unit test suite (255 tests)
+- [x] Host-side unit test suite (276 tests, 270 active)
 - [x] CI pipeline: host-side tests on every PR
 - [x] Dedicated documentation site (Docusaurus, GitHub Pages)
-- [x] Memory optimisation: Flash 87% to 77%, stack headroom 40 B
+- [x] Memory optimisation: Flash 77% to 82%, stack headroom
 - [x] zero-unsafe rule enforced in math/runtime/ui
+- [x] Overflow detection in complex paths (Smith's division)
+- [x] floor/ceil/round functions for user expressions
 
 ## Short-term
 
@@ -43,10 +45,8 @@ description: Past milestones and future development plans
 
 ### Math engine hardening
 
-- [ ] Fractional display mode (`1/3` instead of `0.333333`)
-- [ ] Overflow detection in more paths (especially complex mul/div)
+- [ ] Fractional display mode ($1/3$ instead of $0.333333$)
 - [ ] Configurable output precision (3-9 decimal places)
-- [ ] floor/ceil/round functions for user expressions
 
 ### Developer experience
 
@@ -76,7 +76,7 @@ changes.
 
 - [ ] Open-source KiCad PCB (mechanical keyswitches, OLED, USB-C)
 - [ ] 3D-printable enclosure
-- [ ] BOM targeting $20-30
+- [ ] BOM targeting \$20-30
 - [ ] Cherry MX / Kailh Choc switch support
 - [ ] Battery charging circuit (LiPo)
 
@@ -128,7 +128,6 @@ changes.
 ### Community
 
 - [ ] Contribution guide for new function requests
-- [ ] Community port catalogue
 - [ ] Web-based WASM simulator
 - [ ] Internationalisation (i18n)
 - [ ] SPI flash image builder

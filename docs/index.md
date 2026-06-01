@@ -12,48 +12,70 @@ slug: /
 **Bare-metal scientific calculator firmware** for the **LM3S811** ARM Cortex-M3
 (64 KB Flash, 8 KB SRAM), written in Rust with `#![no_std]` `#![no_main]`.
 
-Features a Q31.32 fixed-point math engine (i128 intermediates, ~9 decimal
-digits), recursive-descent expression parser with implicit multiplication,
-interactive UART console, and I2C-driven OLED display. No heap, no allocator,
-no OS.
+Features a Q31.32 fixed-point math engine with CORDIC + Taylor-corrected trig,
+minimax polynomial exp/log, CLZ-based square root, rational minimax arctangent,
+Smith's robust complex division, Stirling's log-gamma, and adaptive Simpson
+integration. No heap, no allocator, no OS.
 
 [![Build Status](https://github.com/NumCore/NumCore/actions/workflows/ci.yml/badge.svg)](https://github.com/NumCore/NumCore/actions/workflows/ci.yml)
 
 ## Project highlights
 
 - **Q31.32 fixed-point** — i64 storage, i128 intermediates, saturating
-  arithmetic, `Option<T>` error model
-- **CORDIC** sin/cos/tan/atan (24 iterations, 192 B atan table)
-- **Taylor** exp (12 terms, range-reduced) and ln (20 terms, range-reduced)
-- **Newton-Raphson** sqrt (10 iterations, initial guess from `u64::isqrt`)
+  arithmetic, `Option<T>` error model, precision of $2^{-32}\approx2.33\times10^{-10}$ (~9 decimal digits)
+- **CORDIC sin/cos** — 22 iterations + first-order Taylor correction on
+  residual angle ($|\delta|<2^{-21}$, corrected to $O(\delta^2)<2.3\times10^{-13}$)
+- **Rational minimax atan** — $\operatorname{atan}(r)=r\cdot P(r^2)/Q(r^2)$,
+  Ganssle-Homer form, Horner evaluation, error $<1.6\times10^{-10}$ rad
+- **Minimax exp** — degree-7 polynomial, max error $\sim5.95\times10^{-11}$
+- **Minimax ln** — degree-10 polynomial, max error $\sim1.62\times10^{-9}$
+- **CLZ reciprocal sqrt** — 32-entry LUT + 3 Newton iterations on $1/\sqrt{x}$
+  + 1 final Newton refinement on $\sqrt{x}$
+- **Smith's complex division** — overflow-safe branch on $|c|\ge|d|$,
+  handles values up to $\sim10^9$ in Q31.32
+- **Stirling's ln gamma** — asymptotic series $z\ge5$ with recurrence and
+  reflection formula, $\sim6$ ULP worst-case error
+- **Adaptive Simpson integration** — recursive bisection, $\tau\approx10^{-8}$,
+  max depth 20
 - **Recursive-descent parser** — PEMDAS, right-associative `^`, implicit
   multiplication, flat-arena AST `[AstNode; 64]`
 - **Complex numbers** — full arithmetic + analytic-continuation trig
-- **Degrees mode** — real-arg trig converts; complex/hyperbolic always rad
-- **Loop aggregates** — `sum()` + Simpson's rule `int()` (100 intervals)
-- **Log-space distributions** — ln_gamma (Lanczos 6-term), ln_factorial
+- **Log-space distributions** — ln_gamma (Stirling), ln_factorial
   (hybrid table/Stirling), binomial/Poisson PMF, chi-squared CDF
-- **255/255 host-side tests**, 11 ignored (overflow diff with embedded)
+- **270/270 host-side tests pass**, 6 pre-existing ignored
+  (overflow/underflow at Q31.32 boundaries)
 
 ## Supported functions
 
-Arithmetic: `+ - * / ^ %`. Trig: `sin cos tan asin acos atan`. Hyperbolic:
-`sinh cosh tanh asinh acosh atanh`. Other: `sqrt abs exp ln log log2 deg rad
-nthroot lngamma`. Distributions: `binomialprob poissonprob chisqcdf`. Loops:
-`sum int`. Storage: `sto`. Constants: `pi e`. Variables: `Ans A-Z`.
+Arithmetic: `+ - * / ^ %`.
+
+Trigonometric: `sin cos tan asin acos atan`.
+
+Hyperbolic: `sinh cosh tanh asinh acosh atanh`.
+
+Other: `sqrt abs exp ln log log2 floor ceil round deg rad nthroot lngamma`.
+
+Distributions: `binomialprob poissonprob chisqcdf`.
+
+Loops: `sum int`.
+
+Storage: `sto`. Constants: `pi e`. Variables: `Ans A-Z`.
 
 See [Math Engine](/math-engine) for full reference.
 
 ## Firmware metrics
 
-| Metric                   | Value              | Budget   | Usage |
-|--------------------------|--------------------|----------|-------|
-| Flash (.text + .rodata)  | 50,343 bytes       | 64 KB    | 77%   |
-| RAM (.bss)               | 5,264 bytes        | 8 KB     | 64%   |
-| Stack (actual peak)      | 3,032 bytes        | 3,072 B  | 99%   |
+| Metric                         | Value              | Budget   | Usage |
+|--------------------------------|--------------------|----------|-------|
+| Flash (.vector_table + .text)  | 53,735 bytes       | 64 KB    | 82.0% |
+| RAM (.bss statics)             | 2,192 bytes        | 8 KB     | 26.8% |
+| Stack (reserved)               | 3,072 bytes        | 8 KB     | 37.5% |
+| RAM total (bss + stack)        | 5,264 bytes        | 8 KB     | 64.3% |
+| RAM unallocated gap            | 2,416 bytes        | 8 KB     | 29.5% |
 
-No `.data` section. The stack is measured by SP instrumentation at
-`evaluate_node` entry via GDB.
+No `.data` section. The stack is reserved at 3 KB (`_stack_size = 3K`) in the
+linker script, growing downward from `0x2000_2000`. The `.bss` ends at
+`0x2000_0890`, leaving a 2,416-byte gap between statics and stack base.
 
 ## Quick start
 
@@ -61,7 +83,7 @@ No `.data` section. The stack is measured by SP instrumentation at
 # Build firmware (release, size-optimised)
 cargo build -p numcore-lm3s811 --release --target thumbv7m-none-eabi
 
-# Run host-side unit tests (255 tests)
+# Run host-side unit tests (270 tests)
 cargo test -p numcore_math --tests
 
 # Run in QEMU
