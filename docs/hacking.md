@@ -18,7 +18,7 @@ cargo build -p numcore-lm3s811 --release --target thumbv7m-none-eabi
 # Build firmware (debug — faster compile, larger Flash)
 cargo build -p numcore-lm3s811 --target thumbv7m-none-eabi
 
-# Run host-side unit tests (270 tests)
+# Run host-side unit tests (275 tests)
 make test
 # or
 cargo test -p numcore_math --tests
@@ -119,7 +119,7 @@ Once running in QEMU, type expressions and press Enter:
 ## Host-side unit tests
 
 The test-suite (`test-suite/`) includes every `numcore/src/math/*.rs` file via
-`#[path]` attributes and compiles for the host. 276 tests (270 active, 6 ignored)
+`#[path]` attributes and compiles for the host. 281 tests (275 active, 6 ignored)
 cover the entire math engine:
 
 ### Test organisation (test-suite/tests/math.rs)
@@ -179,8 +179,8 @@ All pass correctly on the embedded target.
 | Component            | Size (bytes) | % of Flash |
 |----------------------|-------------|-----------|
 | .vector_table        | 64          | 0.1%      |
-| .text + .rodata      | 53,671      | 81.9%     |
-| **Total**            | **53,735**  | **82.0%** |
+| .text + .rodata      | 44,495      | 67.9%     |
+| **Total**            | **44,559**  | **68.0%** |
 
 Get exact numbers with:
 
@@ -193,8 +193,8 @@ arm-none-eabi-objdump -h target/thumbv7m-none-eabi/release/NumCore
 
 | Resource           | Size (bytes) | Address Range              |
 |--------------------|-------------|----------------------------|
-| .bss (statics)     | 2,192       | 0x2000_0000 - 0x2000_0890  |
-| Unallocated gap    | 2,416       | 0x2000_0890 - 0x2000_1400  |
+| .bss (statics)     | 2,200       | 0x2000_0000 - 0x2000_0898  |
+| Unallocated gap    | 2,408       | 0x2000_0898 - 0x2000_1400  |
 | Stack (reserved)   | 3,072       | 0x2000_1400 - 0x2000_2000  |
 | SRAM total         | 8,192       | 0x2000_0000 - 0x2000_2000  |
 
@@ -386,6 +386,9 @@ arm-none-eabi-nm -S --size-sort target/thumbv7m-none-eabi/debug/NumCore | tail -
    - Write the Q31.32 fixed-point implementation
    - Handle domain errors by returning `Option` (`None` means error)
    - Handle overflow/underflow at Q31.32 boundaries
+   - If the function can overflow, call `set_overflow_info(log10_est, negative)`
+     in the caller (`evaluator.rs`) so the evaluator can display scientific
+     notation instead of `! error`
 
 4. **Wire to the evaluator** (`numcore/src/math/evaluator.rs`):
    - Add the match arm in `apply_function()`, `apply_two_arg_function()`, or

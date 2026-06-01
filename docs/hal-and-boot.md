@@ -10,12 +10,12 @@ description: Memory map, boot sequence, HAL modules, MMIO safety, porting checkl
 ```
 Flash (0x0000_0000, 64 KB):
   [0x0000_0000 - 0x0000_003F]  .vector_table    (64 bytes)
-  [0x0000_0040 - 0x0000_D1E7]  .text + .rodata  (53,671 bytes, 82.0%)
-  Remaining: ~11.6 KB free
+  [0x0000_0040 - 0x0000_AE0F]  .text + .rodata  (44,495 bytes, 68.0%)
+  Remaining: ~19.5 KB free
 
 RAM (0x2000_0000, 8 KB):
-  [0x2000_0000 - 0x2000_0890]  .bss             (2,192 bytes)
-  [0x2000_0890 - 0x2000_1400]  Unallocated gap  (2,416 bytes)
+  [0x2000_0000 - 0x2000_0898]  .bss             (2,200 bytes)
+  [0x2000_0898 - 0x2000_1400]  Unallocated gap  (2,408 bytes)
   [0x2000_1400 - 0x2000_2000]  .stack           (3,072 bytes, grows down)
   [0x2000_2000]                 Top of SRAM     (initial SP)
 ```
