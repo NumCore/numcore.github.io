@@ -1,5 +1,7 @@
 // @ts-check
 import {themes as prismThemes} from 'prism-react-renderer';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -25,6 +27,8 @@ const config = {
     locales: ['en'],
   },
 
+  stylesheets: ['/katex.min.css'],
+
   presets: [
     [
       'classic',
@@ -33,7 +37,9 @@ const config = {
         docs: {
           sidebarPath: './sidebars.js',
           routeBasePath: '/',
-          editUrl: 'https://github.com/NumCore/NumCore/edit/main/',
+          editUrl: 'https://github.com/NumCore/numcore.github.io/edit/main/',
+          remarkPlugins: [remarkMath],
+          rehypePlugins: [rehypeKatex],
         },
         blog: false,
         theme: {

@@ -12,9 +12,9 @@ responsibilities; the shared `numcore/` crate is entirely hardware-independent.
 ## Safety contract
 
 1. **HAL crate** (`hal-lm3s811/`) is the **only** crate permitted MMIO. All
-   `unsafe` for hardware register access is in `mmio.rs` (two functions:
-   `read_register` and `write_register`). Every other HAL module calls through
-   these.
+   `unsafe` for hardware register access is in `mmio.rs` (three functions:
+   `read_register`, `write_register`, `set_register_bits`). Every other HAL
+   module calls through these.
 2. **`numcore-<mcu>/src/boot.rs`** uses `unsafe` for `.bss` zeroing and `.data`
    copying — unavoidable on bare metal.
 3. **`runtime/`, `math/`, `ui/` contain zero `unsafe` code.** They interact with
@@ -31,15 +31,20 @@ changes to `numcore/`.
   │  Layer 8:  modes/                     [future]    │
   ├───────────────────────────────────────────────────┤
   │  Layer 7:  ui/  (numcore/src/ui/)                 │
+  │  font.rs, formula.rs — rendering pipeline         │
   ├───────────────────────────────────────────────────┤
   │  Layer 6:  math/  (numcore/src/math/)             │
+  │  fixed_point, complex, distributions,             │
+  │  lexer, parser, evaluator, engine, vars           │
   ├───────────────────────────────────────────────────┤
   │  Layer 5:  runtime/  (numcore/src/runtime/)       │
+  │  mod.rs, state.rs, event.rs                       │
   ├───────────────────────────────────────────────────┤
   │  Layer 2:  hal::*  (numcore/src/hal.rs)           │
   │  Uart + Display traits — no concrete hardware     │
   ├───────────────────────────────────────────────────┤
   │  Layer 4:  HAL crate (hal-<mcu>/)                 │
+  │  mmio, uart, i2c, gpio, clock, oled              │
   ├───────────────────────────────────────────────────┤
   │  Layer 3:  boot.rs (numcore-<mcu>/src/)           │
   └───────────────────────────────────────────────────┘
@@ -59,16 +64,17 @@ NumCore/
 │   └── src/
 │       ├── lib.rs                # Module re-exports
 │       ├── hal.rs                # Uart + Display traits
-│       ├── math/                 # 7 modules: fixed_point, complex,
-│       │                         #   lexer, parser, evaluator,
-│       │                         #   engine, vars, distributions
+│       ├── math/                 # 8 modules:
+│       │   fixed_point, complex, distrib, lexer,
+│       │   parser, evaluator, engine, vars
 │       └── runtime/              # Event loop, CalcState
 ├── hal-lm3s811/                  # HAL crate (per-MCU)
 │   ├── Cargo.toml
 │   ├── link.x                    # Linker script
 │   └── src/
 │       ├── lib.rs
-│       ├── mmio.rs, uart.rs, i2c.rs, gpio.rs, clock.rs, oled.rs
+│       └── mmio.rs, uart.rs, i2c.rs, gpio.rs,
+│           clock.rs, oled.rs
 ├── numcore-lm3s811/              # Per-MCU binary crate
 │   ├── Cargo.toml
 │   └── src/
@@ -76,7 +82,7 @@ NumCore/
 │       └── boot.rs               # Vector table, Reset handler
 └── test-suite/                   # Host-side test crate
     ├── Cargo.toml
-    └── tests/math.rs             # 255 tests
+    └── tests/math.rs             # 276 tests (270 active)
 ```
 
 | Member            | Target                  | Purpose                          |
@@ -103,15 +109,15 @@ create a new binary crate with `boot.rs` + `link.x`. No `numcore/` changes.
 
 ## Key architecture-level decisions
 
-1. **Q31.32 over Q20.12** — 32 fractional bits give ~9 decimal digits. The
-   Cortex-M3's 64-bit multiply instructions make i64 arithmetic free in
-   registers. Q20.12 would give only ~3.6 digits — insufficient for scientific
-   use.
+1. **Q31.32 over Q20.12** — 32 fractional bits give $\sim9$ decimal digits.
+   The Cortex-M3's `SMULL`/`UMULL` instructions make i64 arithmetic free in
+   registers. Q20.12 would give only $\sim3.6$ digits — insufficient for
+   scientific use.
 
 2. **Static scratch buffers over stack allocation** — All scratch memory
-   (lexer output, AST arena, expression copy) lives in `CalcState` (.bss).
-   The AST arena alone is 3,088 B — placing it on the stack would consume
-   nearly the entire 3 KB stack reservation.
+   (lexer output at 32 tokens, AST arena at 64 nodes, expression copy) lives
+   in `CalcState` (.bss). The AST arena alone is 3,088 B — larger than the
+   entire 3 KB stack reservation.
 
 3. **No heap** — Zero dynamic allocation. All data structures are fixed-size
    arrays sized at compile time. No OOM, no fragmentation, no allocator.

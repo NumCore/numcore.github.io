@@ -9,37 +9,64 @@ description: Memory map, boot sequence, HAL modules, MMIO safety, porting checkl
 
 ```
 Flash (0x0000_0000, 64 KB):
-  [0x0000_0000 - 0x0000_003F]  .vector_table  (64 bytes)
-  [0x0000_0040 - 0x000C_4E07]  .text + .rodata  (50,343 bytes, 77%)
-  Remaining: ~15 KB free
+  [0x0000_0000 - 0x0000_003F]  .vector_table    (64 bytes)
+  [0x0000_0040 - 0x0000_D1E7]  .text + .rodata  (53,671 bytes, 82.0%)
+  Remaining: ~11.6 KB free
 
 RAM (0x2000_0000, 8 KB):
-  [0x2000_0000 - 0x2000_1490]  .bss  (5,264 bytes)
-  [0x2000_1400 - 0x2000_2000]  .stack (3,072 bytes, grows down)
-  [0x2000_2000]                Top of SRAM (initial SP)
+  [0x2000_0000 - 0x2000_0890]  .bss             (2,192 bytes)
+  [0x2000_0890 - 0x2000_1400]  Unallocated gap  (2,416 bytes)
+  [0x2000_1400 - 0x2000_2000]  .stack           (3,072 bytes, grows down)
+  [0x2000_2000]                 Top of SRAM     (initial SP)
 ```
 
-Note that .bss end (0x1490) and stack base (0x1400) slightly overlap on paper, but work in practice because they occupy disjoint regions of RAM at runtime.
-
-Stack reserved: 3,072 B (3 KB). Actual peak: 3,032 B (measured by SP instrumentation at `evaluate_node` entry via GDB).
+Stack reserved: 3,072 B (3 KB). Stack grows downward from `0x2000_2000`.
 
 ## Boot Sequence (Layer 3)
 
-The reset handler in `boot.rs` performs three steps: zero `.bss` via `ptr::write_bytes`, copy `.data` from Flash LMA to RAM VMA via `ptr::copy_nonoverlapping`, then jump to `crate::start()`. The vector table occupies 64 bytes at Flash base — initial stack pointer, Reset vector, and 14 exception handlers. Any unhandled exception spins in `DefaultHandler`. There is no bootloader; firmware is loaded one-shot through JTAG/SWD only. The linker script (`link.x`) defines `FLASH (0x0, 64K)`, `RAM (0x20000000, 8K)`, and `_stack_size = 3K`.
+The reset handler in `boot.rs` performs three steps: zero `.bss` via
+`ptr::write_bytes`, copy `.data` from Flash LMA to RAM VMA via
+`ptr::copy_nonoverlapping` (zero bytes in the current build — no
+initialised data section), then jump to `crate::start()`.
+
+The vector table occupies 64 bytes at Flash base — initial stack pointer,
+Reset vector, and 14 exception handlers. Any unhandled exception spins in
+`DefaultHandler`. There is no bootloader; firmware is loaded one-shot through
+JTAG/SWD only. The linker script (`link.x`) defines `FLASH (0x0, 64K)`,
+`RAM (0x20000000, 8K)`, and `_stack_size = 3K`.
 
 ## HAL Layer (Layer 4)
 
-The HAL is the only crate permitted to touch hardware registers. All `unsafe` MMIO is confined to `mmio.rs`, which exposes `read_register` and `write_register` — thin wrappers around volatile pointer reads and writes.
+The HAL is the only crate permitted to touch hardware registers. All `unsafe`
+MMIO is confined to `mmio.rs`, which exposes `read_register`, `write_register`,
+and `set_register_bits` — thin wrappers around volatile pointer reads and writes.
 
 | Module | Registers / Base | Protocol | Pins |
 |--------|-----------------|----------|------|
 | uart.rs | UART0 (0x4000_C000) | 8N1, 115200 baud, polling TX/RX | PA0=RX, PA1=TX |
 | i2c.rs | I2C0 (0x4002_0000) | Master, 100 kHz, `send_byte`/`send_bytes` | PB2=SCL, PB3=SDA |
-| gpio.rs | 6 ports (A-F) | AFSEL, DIR, DEN registers | Alt func config |
-| clock.rs | RCC registers | 20 MHz xtal → PLL → 50 MHz, RCGC gating | — |
-| oled.rs | SSD0303 (0x3C) | I2C, init sequence, render, clear, `set_pixel` | I2C0 |
+| gpio.rs | 6 ports (A-F) | AFSEL, DIR, DEN, ODR registers | Alt func config |
+| clock.rs | RCC registers | 12 MHz internal oscillator (QEMU), RCGC gating | — |
+| oled.rs | SSD0303 (0x3D) | I2C, 5-command init, render, clear, `set_pixel` | I2C0 |
 
-**uart.rs** implements the `numcore::hal::Uart` trait (`putchar`, `getchar`, `poll_byte`, `transmit_bytes`) by polling the FIFO status registers. **i2c.rs** provides master-mode sends to the OLED, handling START/ACK/STOP protocol in software. **gpio.rs** holds port base addresses and configures alternate functions, direction, and digital enable. **clock.rs** initialises the system clock (20 MHz crystal → PLL → 50 MHz), gates peripheral clocks via the RCGC registers, and provides a spin-loop `delay`. **oled.rs** drives an SSD0303 display at address 0x3C over I2C: it sends the ~15-command init sequence, uploads a framebuffer on `render`, blanks the screen on `clear`, and sets individual pixels. It implements the `Display` trait.
+**uart.rs** implements the `numcore::hal::Uart` trait (`putchar`, `getchar`,
+`poll_byte`, `transmit_bytes`) by polling the FIFO status registers. Baud rate:
+divisor = 12 MHz / (16 $\times$ 115200) $\approx$ 6.51; IBRD = 6, FBRD = 33.
+
+**i2c.rs** provides master-mode sends to the OLED, handling START/ACK/STOP
+protocol in software. Timer period: TPR = (12 MHz / (20 $\times$ 100 kHz)) $-$ 1 = 5.
+
+**gpio.rs** holds port base addresses and configures alternate functions,
+direction, digital enable, and open-drain mode.
+
+**clock.rs** runs at 12 MHz (internal oscillator; no PLL configured). Gates
+peripheral clocks via the RCGC registers and provides a spin-loop `delay`.
+
+**oled.rs** drives an SSD0303 display at address 0x3D over I2C: sends the
+5-command init sequence (DISPLAY_OFF, START_LINE_0, SEG_REMAP_NORMAL,
+NORMAL_DISPLAY, DISPLAY_ON), uploads a 192-byte framebuffer on `render`,
+blanks the screen on `clear`, and sets individual pixels. The visible column
+offset is 36 (accounting for the SSD0303 controller RAM layout).
 
 ### Uart Trait
 

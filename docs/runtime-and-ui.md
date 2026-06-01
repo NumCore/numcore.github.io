@@ -23,7 +23,7 @@ The single unsafe block in the runtime is in `handle_expression_submission`, whi
 | `last_result` | `[u8; 48]` | Last formatted answer for scrolling |
 | `last_result_len` | `usize` | Valid byte count in result |
 | `result_scroll_offset` | `usize` | Horizontal scroll offset for result |
-| `variables` | `VariableStore` | Ans + 26 registers A–Z |
+| `variables` | `VariableStore` | Ans + 26 registers A-Z |
 | `active_mode` | `CalculatorMode` | Standard or Advanced |
 | `angle_mode` | `AngleMode` | Radians or Degrees |
 | `lex_scratch` | `LexResult` | Reusable lexer output (avoids stack alloc) |
@@ -32,11 +32,11 @@ The single unsafe block in the runtime is in `handle_expression_submission`, whi
 
 **Input buffer operations** — `append_character_to_input` shifts bytes right from cursor and inserts; `remove_last_input_character` shifts bytes left from before cursor; `clear_input` zeroes the buffer and resets length and cursor. Cursor movement is bounded by 0 and `input_length`.
 
-**Result scrolling** — `scroll_result_left` and `scroll_result_right` adjust `result_scroll_offset` within the range `0..max(0, last_result_len - 13)`. The display shows 13 visible characters plus a scroll indicator arrow at column 14 when the result overflows 15 characters.
+**Result scrolling** — `scroll_result_left` and `scroll_result_right` adjust `result_scroll_offset` within the range $0..\max(0, \text{last\_result\_len} - 13)$. The display shows 13 visible characters plus a scroll indicator arrow at column 14 when the result overflows 15 characters.
 
 ## Event Loop (mod.rs)
 
-The startup sequence is: initialise UART → initialise I2C (via `D::init()`) → initialise OLED → print welcome banner → enter event loop.
+The startup sequence is: initialise UART $\to$ initialise I2C (via `D::init()`) $\to$ initialise OLED $\to$ print welcome banner $\to$ enter event loop.
 
 The event dispatch table is:
 
@@ -45,11 +45,11 @@ The event dispatch table is:
 | Printable ASCII (0x20–0x7E) | `DigitOrOperator` | Append character to input buffer |
 | Enter (0x0A / 0x0D) | `Submit` | Evaluate expression, store result, display |
 | Backspace (0x7F / 0x08) | `Backspace` | Remove character before cursor |
-| Escape (0x1B) | `ToggleMode` | Standard ↔ Advanced |
-| Ctrl+D (0x04) | `ToggleAngleMode` | Radians ↔ Degrees |
+| Escape (0x1B) | `ToggleMode` | Standard $\leftrightarrow$ Advanced |
+| Ctrl+D (0x04) | `ToggleAngleMode` | Radians $\leftrightarrow$ Degrees |
 | Arrow keys | `CursorLeft` / `CursorRight` | Move cursor or scroll result |
 
-ANSI escape sequence parsing uses a 3-state machine (`None` → `PendingEscape` → `PendingBracket`) with a 3-byte buffer. A standalone 0x1B fires `ToggleMode` after 2 consecutive idle poll cycles, giving a second byte (like `[`) time to arrive. Arrow keys send `0x1B [ D` (left) or `0x1B [ C` (right).
+ANSI escape sequence parsing uses a 3-state machine (`None` $\to$ `PendingEscape` $\to$ `PendingBracket`) with a 3-byte buffer. A standalone `0x1B` fires `ToggleMode` after 2 consecutive idle poll cycles, giving a second byte (like `[`) time to arrive. Arrow keys send `0x1B [ D` (left) or `0x1B [ C` (right).
 
 ## Expression Submission
 
@@ -61,16 +61,30 @@ The UI layer is generic over `<D: Display>` and contains zero unsafe code. It li
 
 ### Font (font.rs)
 
-A 5×7 monospace bitmap font stored as one byte per row (5 bits used per byte). The table holds 95 glyphs covering ASCII 0x20 (space) through 0x7E (tilde), each glyph stored as 7 bytes for a total of 665 bytes in `.rodata`. Characters outside this range render as a solid 5×7 replacement block. The effective advance width is 6 pixels per character (5 glyph columns + 1 pixel gap), giving 16 characters per 96-pixel line.
+A 5$\times$7 monospace bitmap font stored as one byte per row (5 bits used per byte). The table holds 95 glyphs covering ASCII 0x20 (space) through 0x7E (tilde), each glyph stored as 7 bytes for a total of 665 bytes in `.rodata`. Characters outside this range render as a solid 5$\times$7 replacement block. The effective advance width is 6 pixels per character (5 glyph columns + 1 pixel gap), giving 16 characters per 96-pixel line.
 
 ### Display Layout
 
-The 96×16 OLED is organised as two 8-pixel-tall pages:
+The 96$\times$16 OLED is organised as two 8-pixel-tall pages:
+
 - **Page 0** — expression line with cursor (inverted character at cursor position)
 - **Page 1** — result line, prefixed with `=`, supporting horizontal scroll when the rendered result exceeds 15 characters
 
-A scroll indicator arrow (left or right) is shown at column 14 when the result overflows. Aggregate expressions (`sum(...)`, `int(...)`) use a special two-line layout with a tall glyph spanning both pages.
+A scroll indicator arrow (left or right) is shown at column 14 when the result overflows. Aggregate expressions (`sum(...)`, `int(...)`) use a special two-line layout with a tall glyph (integral or sigma symbol) spanning both pages, upper/lower bounds on separate pages, and the body to the right.
+
+### Custom Glyphs
+
+Sentinel bytes replace standard ASCII with mathematical symbols:
+
+| Sentinel | Glyph | Meaning |
+|----------|-------|---------|
+| `0x01` | $\to$ | Right scroll arrow |
+| `0x02` | $\gets$ | Left scroll arrow |
+| `*` | $\times$ | Multiplication |
+| `/` | $\div$ | Division |
+| `-` | $-$ | Minus |
+| `pi` digraph | $\pi$ | Pi constant |
 
 ### Rendering Pipeline
 
-`formula::render_screen` draws the current `CalcState` into a display framebuffer allocated via `D::new_buffer()`. It clears the buffer, renders the expression line with cursor inversion, optionally renders the result line, then calls `D::render(&framebuffer)` to upload to the SSD0303 GDDRAM via I2C. Custom glyphs replace `*`, `/`, `-`, `pi`, and scroll indicators with mathematical symbols before uploading.
+`formula::render_screen` draws the current `CalcState` into a display framebuffer allocated via `D::new_buffer()`. It clears the buffer, renders the expression line with cursor inversion, optionally renders the result line, then calls `D::render(&framebuffer)` to upload to the SSD0303 GDDRAM via I2C.

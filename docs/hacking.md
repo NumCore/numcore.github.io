@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 6
 description: Build commands, QEMU, debugging, flash/stack budgets, adding features
 ---
 
@@ -18,7 +18,7 @@ cargo build -p numcore-lm3s811 --release --target thumbv7m-none-eabi
 # Build firmware (debug — faster compile, larger Flash)
 cargo build -p numcore-lm3s811 --target thumbv7m-none-eabi
 
-# Run host-side unit tests (255 tests)
+# Run host-side unit tests (270 tests)
 make test
 # or
 cargo test -p numcore_math --tests
@@ -47,7 +47,7 @@ strip = "symbols"     # remove ELF symbol table
 ```
 
 Debug builds omit all optimisation for faster compile-test cycles. They
-produce binaries too large to fit in Flash (~90 KB vs 64 KB limit) — use only
+produce binaries too large to fit in Flash ($\sim 90$ KB vs 64 KB limit) — use only
 for QEMU testing.
 
 ### No default target
@@ -103,44 +103,44 @@ echo "2+2" | cargo run -p numcore-lm3s811 --release --target thumbv7m-none-eabi
 Once running in QEMU, type expressions and press Enter:
 
 ```text
-> sin(pi/2)       → = 1
-> cos(0)          → = 1
-> sqrt(16)        → = 4
-> 3(5)            → = 15 (implicit multiply)
-> sto(42,A)       → = 42 (store)
-> A               → = 42 (recall)
-> ln(e)           → = 1
-> sum(k,1,10,k)   → = 55 (summation)
-> int(x,0,pi,sin(x)) → = 2.000000 (Simpson's rule)
-> sqrt(-1)        → ! error (Standard mode)
-> sqrt(-1)        → = i (Advanced mode, press Escape to toggle)
+> sin(pi/2)          → = 1
+> cos(0)             → = 1
+> sqrt(16)           → = 4
+> 3(5)               → = 15 (implicit multiply)
+> sto(42,A)          → = 42 (store)
+> A                  → = 42 (recall)
+> ln(e)              → = 1
+> sum(K,1,10,K)      → = 55 (summation)
+> int(sin(X),X,0,pi) → = 2.000000 (adaptive Simpson)
+> sqrt(-1)           → ! error (Standard mode)
+> sqrt(-1)           → = i (Advanced mode, press Escape to toggle)
 ```
 
 ## Host-side unit tests
 
 The test-suite (`test-suite/`) includes every `numcore/src/math/*.rs` file via
-`#[path]` attributes and compiles for the host. 255 tests cover the entire math
-engine:
+`#[path]` attributes and compiles for the host. 276 tests (270 active, 6 ignored)
+cover the entire math engine:
 
 ### Test organisation (test-suite/tests/math.rs)
 
 | Category             | Tests | Description                               |
 |----------------------|-------|-------------------------------------------|
-| Constants            | ~5    | pi, e, Q31.32 scale values                |
-| Arithmetic           | ~15   | add, sub, mul, div edge cases             |
-| Rounding             | ~8    | floor, ceil, round, trunc                 |
-| sqrt                 | ~12   | perfect squares, zeros, negatives         |
-| Power                | ~10   | integer powers, nthroot, negative exp     |
-| Trigonometric        | ~25   | standard angles, edge cases, domain       |
-| Inverse trig         | ~15   | asin(1), acos(0), atan(1), domain         |
-| Hyperbolic           | ~10   | sinh, cosh, tanh, symmetry                |
-| Exp/ln               | ~15   | exp of integers, ln of e, domain          |
-| Complex              | ~30   | mul, div, pow, sqrt, trig, log           |
-| Distributions        | ~15   | lngamma, factorial, binomial, Poisson, chisq |
-| Full pipeline        | ~40   | end-to-end evaluate_expression tests      |
-| Parser               | ~30   | error cases, unary minus, implicit mul    |
-| Variables            | ~10   | Ans, register A-Z, sto                    |
-| Loop aggregates      | ~15   | sum, int edge cases                       |
+| Constants            | $\sim 5$ | pi, e, Q31.32 scale values                |
+| Arithmetic           | $\sim 15$ | add, sub, mul, div edge cases             |
+| Rounding             | $\sim 8$ | floor, ceil, round, trunc                 |
+| sqrt                 | $\sim 12$ | perfect squares, zeros, negatives         |
+| Power                | $\sim 10$ | integer powers, nthroot, negative exp     |
+| Trigonometric        | $\sim 25$ | standard angles, edge cases, domain       |
+| Inverse trig         | $\sim 15$ | asin(1), acos(0), atan(1), domain         |
+| Hyperbolic           | $\sim 10$ | sinh, cosh, tanh, symmetry                |
+| Exp/ln               | $\sim 15$ | exp of integers, ln of e, domain          |
+| Complex              | $\sim 37$ | mul, div, pow, sqrt, trig, log, Euler identity |
+| Distributions        | $\sim 18$ | lngamma, factorial, binomial, Poisson, chisq |
+| Full pipeline        | $\sim 40$ | end-to-end evaluate_expression tests      |
+| Parser               | $\sim 30$ | error cases, unary minus, implicit mul    |
+| Variables            | $\sim 10$ | Ans, register A-Z, sto                    |
+| Loop aggregates      | $\sim 17$ | sum, int edge cases                       |
 
 ### Running tests
 
@@ -160,15 +160,17 @@ cargo test -p numcore_math --tests -- --nocapture
 
 ### Ignored tests
 
-11 tests are ignored on host due to differences in overflow behaviour between
-the embedded target (Cortex-M3, saturating arithmetic) and the host (x86_64,
-wrapping arithmetic). They pass correctly on the embedded target:
+6 tests are ignored on host due to differences between the embedded target
+(Cortex-M3, saturating arithmetic) and the host (x86_64, wrapping arithmetic):
 
-- `test_factorial_overflow` — Stirling overflow at k=400
-- `test_chisq_cdf_accuracy` — Lanczos precision differences
-- `test_integration_wide_range` — integrator limits
-- `test_trig_cordic_overflow` — CORDIC edge case
-- `test_power_overflow_negative` — exponentiation overflow
+- `test_nthroot_overflow` — CORDIC overflow in ln on host
+- `test_binomial_vanishingly_small` — underflow at Q31.32 resolution
+- `test_poisson_vanishingly_small` — underflow at Q31.32 resolution
+- `test_eval_summation_too_large` — sum overflow on host
+- `test_eval_summation_empty` — sum overflow on host
+- `test_eval_division` — divide overflow on host (overflow protection)
+
+All pass correctly on the embedded target.
 
 ## Firmware metrics
 
@@ -177,25 +179,10 @@ wrapping arithmetic). They pass correctly on the embedded target:
 | Component            | Size (bytes) | % of Flash |
 |----------------------|-------------|-----------|
 | .vector_table        | 64          | 0.1%      |
-| fixed_point.o        | ~12,000     | 18%       |
-| complex.o            | ~4,000      | 6%        |
-| parser.o             | ~6,000      | 9%        |
-| evaluator.o          | ~5,000      | 8%        |
-| lexer.o              | ~3,000      | 5%        |
-| engine.o             | ~1,000      | 2%        |
-| vars.o               | ~500        | 1%        |
-| distributions.o      | ~2,000      | 3%        |
-| runtime/mod.o        | ~4,000      | 6%        |
-| runtime/state.o      | ~2,000      | 3%        |
-| runtime/event.o      | ~500        | 1%        |
-| ui/formula.o         | ~3,000      | 5%        |
-| ui/font.o            | ~700        | 1%        |
-| hal crates           | ~3,000      | 5%        |
-| libcore / compiler_builtins | ~3,500 | 5%        |
-| **Total**            | **50,343**  | **77%**   |
+| .text + .rodata      | 53,671      | 81.9%     |
+| **Total**            | **53,735**  | **82.0%** |
 
-Module sizes are approximate and vary with compiler version. Get exact
-numbers with:
+Get exact numbers with:
 
 ```bash
 arm-none-eabi-size target/thumbv7m-none-eabi/release/NumCore
@@ -206,17 +193,16 @@ arm-none-eabi-objdump -h target/thumbv7m-none-eabi/release/NumCore
 
 | Resource           | Size (bytes) | Address Range              |
 |--------------------|-------------|----------------------------|
-| .bss (statics)     | 5,264       | 0x2000_0000 - 0x2000_1490  |
+| .bss (statics)     | 2,192       | 0x2000_0000 - 0x2000_0890  |
+| Unallocated gap    | 2,416       | 0x2000_0890 - 0x2000_1400  |
 | Stack (reserved)   | 3,072       | 0x2000_1400 - 0x2000_2000  |
-| Stack (actual max) | 3,032       | (peak at evaluate_node)    |
-| Stack headroom     | 40          | (reserved - actual)        |
 | SRAM total         | 8,192       | 0x2000_0000 - 0x2000_2000  |
 
 ### Measuring peak stack usage
 
 Peak stack depth is measured by SP instrumentation at `evaluate_node` entry:
 
-1. Add a global SP watermark variable in `numcore/src/math/mod.rs`:
+1. Add a global SP watermark variable:
    ```rust
    #[no_mangle]
    pub static mut MIN_SP: u32 = 0x2000_2000;
@@ -233,9 +219,8 @@ Peak stack depth is measured by SP instrumentation at `evaluate_node` entry:
    ```
 3. Build without stripping:
    ```toml
-   # Cargo.toml override for measurement build
    [profile.release]
-   strip = "none"  # preserve symbols
+   strip = "none"
    ```
 4. Run the worst-case workload in QEMU with GDB:
    ```bash
@@ -251,12 +236,9 @@ Peak stack depth is measured by SP instrumentation at `evaluate_node` entry:
    ```
 5. Stack used = `0x2000_2000 - MIN_SP`
 
-The canary-based approach is unreliable on ARM Cortex-M3 because `sub sp,#N`
-instructions jump over 4-byte canary words placed at the stack bottom.
-
 ## Verifying Q31.32 constants
 
-All mathematical constants are computed as `round(value * 2^32)`:
+All mathematical constants are computed as $\text{round}(\text{value} \times 2^{32})$:
 
 ```python
 import math
@@ -269,7 +251,7 @@ def to_q3132(x):
 FIXED_PI      = to_q3132(math.pi)
 FIXED_E       = to_q3132(math.e)
 FIXED_LN2     = to_q3132(math.log(2))
-CORDIC_GAIN   = to_q3132(math.prod(math.cos(math.atan(2**-i)) for i in range(24)))
+CORDIC_GAIN   = to_q3132(math.prod(math.cos(math.atan(2**-i)) for i in range(22)))
 FIXED_PI_OVER_180  = to_q3132(math.pi / 180)
 FIXED_180_OVER_PI  = to_q3132(180 / math.pi)
 
@@ -283,7 +265,7 @@ print(from_q3132(FIXED_E))              # 2.718281828459045
 
 ## LN_FACTORIAL_TABLE values
 
-The precomputed ln(k!) table in `distributions.rs`:
+The precomputed $\ln(k!)$ table in `distributions.rs`:
 
 ```python
 import math
@@ -293,23 +275,23 @@ for k in range(0, 21):
     print(f"k={k:2d}  ln({k}!)={math.lgamma(k+1):.10f}  Q31.32={val}")
 ```
 
-For k > 20, the code uses a 5-term Stirling approximation:
-```
-ln(k!) ≈ k*ln(k) - k + 0.5*ln(2*pi*k) + 1/(12*k) - 1/(360*k^3)
-```
-Relative error < 1e-8 for k >= 21.
+For $k > 20$, the code uses Stirling's series:
 
-## ANTI_TAN (CORDIC arctan table) values
+$$\ln(k!) \approx k\ln k - k + \frac{1}{2}\ln(2\pi k) + \frac{1}{12k} - \frac{1}{360k^3} + \frac{1}{1260k^5}$$
+
+Higher-order terms are guarded against overflow.
+
+## CORDIC arctan table values
 
 ```python
 import math
 SCALE = 2**32
-for i in range(24):
+for i in range(22):
     val = round(math.atan(2**-i) * SCALE)
     print(f"i={i:2d}  atan(2^-{i})={math.atan(2**-i):.10f}  Q31.32={val}")
 ```
 
-This table occupies 24 * 8 = 192 bytes in Flash (.rodata).
+The table occupies $22 \times 8 = 176$ bytes in Flash (.rodata).
 
 ## ANSI escape sequence handling
 
@@ -323,7 +305,7 @@ Up:    0x1B [ A
 Down:  0x1B [ B
 ```
 
-The parser uses a 3-state machine (`None → PendingEscape → PendingBracket`) and
+The parser uses a 3-state machine (`None $\to$ PendingEscape $\to$ PendingBracket`) and
 a 3-byte buffer. Standalone `0x1B` (Escape) fires `ToggleMode` when no second
 byte follows within 2 poll cycles.
 
@@ -397,7 +379,7 @@ arm-none-eabi-nm -S --size-sort target/thumbv7m-none-eabi/debug/NumCore | tail -
 2. **Add the AST enum variant** (`numcore/src/math/parser.rs`):
    - Add the new function to `MathFunction` (single-argument), `TwoArgMathFunction`
      (two-argument), or `ThreeArgMathFunction` (three-argument) enum
-   - Wire the token→AST mapping in the parser's function-parsing logic
+   - Wire the token $\to$ AST mapping in the parser's function-parsing logic
 
 3. **Implement the maths** (`numcore/src/math/fixed_point.rs` or
    `distributions.rs`):
@@ -434,10 +416,10 @@ No changes to `numcore/` required.
 | Constant           | Q31.32 hex               | Q31.32 decimal       | Float equivalent  |
 |--------------------|--------------------------|----------------------|-------------------|
 | FIXED_ONE          | 0x0000_0001_0000_0000    | 4,294,967,296        | 1.0               |
-| FIXED_PI           | 0x0000_0003_243F_6A89    | 13,493,037,705       | 3.1415926535      |
-| FIXED_E            | 0x0000_0002_B7E1_5163    | 11,674,931,555       | 2.7182818284      |
-| FIXED_PI_OVER_2    | 0x0000_0001_921F_B544    | 6,746,518,852        | 1.5707963267      |
-| FIXED_LN2          | 0x0000_0000_B172_17F8    | 2,977,044,472        | 0.6931471805      |
+| FIXED_PI           | 0x0000_0003_243F_6A89    | 13,493,037,705       | $\pi$             |
+| FIXED_E            | 0x0000_0002_B7E1_5163    | 11,674,931,555       | $e$               |
+| FIXED_PI_OVER_2    | 0x0000_0001_921F_B544    | 6,746,518,852        | $\pi/2$           |
+| FIXED_LN2          | 0x0000_0000_B172_17F8    | 2,977,044,472        | $\ln 2$           |
 | CORDIC_GAIN        | 0x0000_0000_9B74_EDA8    | 2,608,131,496        | 0.6072529350      |
-| FIXED_PI_OVER_180  | 0x0000_0000_0477_D1A9    | 74,961,321           | 0.0174532925      |
-| FIXED_180_OVER_PI  | 0x0000_0039_4BB8_34C8    | 246,083,499,208      | 57.2957795130     |
+| FIXED_PI_OVER_180  | 0x0000_0000_0477_D1A9    | 74,961,321           | $\pi/180$         |
+| FIXED_180_OVER_PI  | 0x0000_0039_4BB8_34C8    | 246,083,499,208      | $180/\pi$         |
