@@ -5,29 +5,62 @@ description: Q31.32 contract, pipeline, algorithms with equations, function refe
 
 # Math Engine
 
-## Pipeline
+## Evaluation Pipeline
 
-The evaluation pipeline consists of five stages: raw expression bytes are tokenized by `lexer::tokenise_expression()`, the resulting token stream is parsed by `parser::parse_token_stream()` into a flat-arena AST, `evaluator::evaluate_tree()` walks the AST computing the result, and `engine::format_result()` or `engine::format_overflow()` renders the numeric outcome as a string. The lexer enforces a hard cap of 32 tokens. The parser enforces a hard cap of 64 AST nodes in the `ParseTree` arena. The public API exposed to callers consists of two entry points: `evaluate_expression()` and `format_result()`.
+Input processing follows a three-stage pipeline:
+
+```
+  bytes ──► lexer ──► tokens ──► compiler ──► bytecode ──► vm ──► result
+```
+
+1. **Lexer** (`lexer::tokenise_expression`) — character-by-character state
+   machine, emits up to 64 `Token` values into a flat `[Token; 64]` array.
+   Numbers are converted to Q31.32 immediately. Unary minus detection uses
+   context-sensitive lookback. Mode-gated tokens: `i` → imaginary unit only
+   in Advanced mode; `[`/`]` → matrix brackets only in Matrix mode;
+   `E` → exponent suffix only in Scientific mode.
+
+2. **Compiler** (`compiler::compile`) — recursive-descent precedence climbing
+   (same grammar as the original parser) emits opcodes into a 256 B
+   `Bytecode` buffer. No AST is ever built in memory. 12 opcodes cover all
+   operations, functions, and control flow. The bytecode is a linear program
+   ending in `Halt`.
+
+3. **VM** (`vm::execute`) — flat `loop { match op { ... } }` dispatch with a
+   16-entry `Option<Matrix>` value stack on the C stack. Zero C recursion —
+   all operand storage is in the explicit value stack. Overflow tracked via a
+   local `overflow: Option<(i64, bool)>` variable rather than bubbling through
+   call frames.
+
+The private API exposed to the runtime consists of two entry points:
+`engine::evaluate_expression()` and `engine::format_result()`.
 
 ## Q31.32 Contract
 
-All numeric values are stored as signed 64-bit integers under the Q31.32 fixed-point convention, with the binary point positioned between bits 31 and 32:
+All numeric values are stored as signed 64-bit integers under the Q31.32
+fixed-point convention, with the binary point positioned between bits 31 and 32:
 
 $$x_{\text{real}} = \frac{x_{\text{stored}}}{2^{32}}$$
 
-The constant `FIXED_ONE` equals $1 \ll 32 = 4\,294\,967\,296$, giving a precision of $2^{-32} \approx 2.33 \times 10^{-10}$, or approximately nine decimal digits. The representable range is $[-2^{31},\,2^{31}-1]$ in Q31.32 units, corresponding to $[-2^{31} \cdot 2^{-32},\,(2^{31}-1)\cdot 2^{-32}] \approx [-2.147,\,2.147)$ billion in real terms.
+The constant `FIXED_ONE` equals $1 \ll 32 = 4\,294\,967\,296$, giving a
+precision of $2^{-32} \approx 2.33 \times 10^{-10}$, or approximately nine
+decimal digits. The representable range is approximately $[-2.147,\,+2.147)$
+billion in real terms.
 
 **Multiplication** promotes to i128:
 
 $$(a \cdot b)_{\text{Q31.32}} = \left\lfloor\frac{a \cdot b}{2^{32}} + \frac{1}{2}\right\rfloor$$
 
-Symmetric rounding (half away from zero) is applied via absolute-value arithmetic before the final truncation.
+Symmetric rounding (half away from zero) is applied via absolute-value
+arithmetic before the final truncation.
 
 **Division** computes:
 
 $$(a / b)_{\text{Q31.32}} = \left\lfloor\frac{a \ll 32}{b}\right\rfloor$$
 
-Both return `None` on overflow or division by zero. Addition and subtraction use saturating arithmetic (`saturating_add`, `saturating_sub`) so overflow clamps to `i64::MIN` or `i64::MAX` instead of wrapping.
+Both return `None` on overflow or division by zero. Addition and subtraction
+use saturating arithmetic (`.saturating_add`, `.saturating_sub`) so overflow
+clamps to `i64::MIN` or `i64::MAX` instead of wrapping.
 
 ### Error model: `EvalResult`
 
@@ -35,29 +68,22 @@ The evaluator returns `EvalResult`, a tri-state enum:
 
 ```rust
 enum EvalResult {
-    Value(Complex),
+    Matrix(Matrix),
     Overflow { mantissa: i64, exponent: i32, negative: bool },
     DomainError,
 }
 ```
 
-- **`Value`** — a normal result within Q31.32 range, formatted to 6 decimal places
-  with trailing zeros stripped.
-- **`Overflow`** — the result exceeds the Q31.32 range. The overflow subsystem
-  stores a log10 estimate and sign via a thread-local static at ~25 overflow-prone
-  call sites (`exp`, `sinh`, `cosh`, `multiply`, `power`, `deg`/`rad` conversions,
-  and their complex counterparts), then computes a scientific-notation display
-  at the top-level return. Binary operations (`÷`, `×`, `^`) adjust the overflow
-  estimate so that `sinh(30)/2` halves the mantissa and `sinh(30)×2` increments
-  the exponent. `format_overflow` renders the result as e.g. `1.34406E+43`,
-  capped at |exponent| ≤ 99 (calculator convention); larger exponents display
-  as `! overflow`.
-- **`DomainError`** — an invalid input (e.g. `sqrt(-1)`, `ln(0)`), rendered as
-  `! error`.
-
-Display formatting rounds to six decimal places, strips trailing zeros, and
-suppresses the minus sign when a negative value rounds to zero (avoiding
-`-0.000000` output).
+- **`Matrix`** — a normal result. The unified `Matrix` type can represent a
+  scalar (1×1), complex number (1×2), matrix (up to 4×4), or scientific
+  notation value (1×2 with `kind = Scientific`). Results are formatted to
+  6 decimal places with trailing zeros stripped.
+- **`Overflow`** — the result exceeds Q31.32 range or the scientific notation
+  display limit (|exponent| > 99). The overflow subsystem stores a log10
+  estimate and sign via a thread-local static, then computes a
+  scientific-notation display at the top-level return.
+- **`DomainError`** — an invalid input (e.g. `sqrt(-1)` in Standard mode),
+  rendered as `! error`.
 
 Constants from `fixed_point.rs` (exact Q31.32 values):
 
@@ -72,17 +98,46 @@ Constants from `fixed_point.rs` (exact Q31.32 values):
 | `FIXED_180_OVER_PI` | $180/\pi$   | 246,083,499,208 |
 | `CORDIC_GAIN`  | $K \approx 0.60725$ | 2,608,131,496 |
 
+## Opcodes
+
+12 opcodes encoded in a single byte, some followed by operand bytes:
+
+| Opcode | Byte | Followed by | Stack effect |
+|--------|------|------------|--------------|
+| `PushI64` | 0x01 | 8 bytes LE i64 | `→ val` |
+| `PushReg` | 0x02 | 1 byte register | `→ val` |
+| `PushAns` | 0x03 | — | `→ ans` |
+| `PushConst*` | 0x04–0x06 | — | `→ π`/`e`/`i` |
+| `PushMatReg` | 0x07 | 1 byte register | `→ matrix` |
+| `PushMatLit` | 0x08 | 1 byte cache index | `→ matrix` |
+| `ConstructSci` | 0x09 | — | `→ Scientific(mant, exp)` |
+| `Add/Sub/Mul/Div/Mod/Pow/Neg` | 0x10–0x16 | — | pop 2 → push 1 |
+| `CallFunction` | 0x20 | 1 byte function index | pop 1 → push 1 |
+| `CallBinomP/PoissonP/ChiCDF/NthRoot` | 0x40–0x43 | — | pop 2–3 → push 1 |
+| `CallMatrixFunc` | 0x50 | 1 byte function index | pop 1 → push 1 |
+| `Sto/StoMat` | 0x60–0x61 | 1 byte register | pop 1 → push 1 |
+| `LoopSum/LoopInt` | 0x70–0x71 | 5 bytes header | pop 2 → push 1 |
+| `Halt` | 0xFF | — | — |
+
+`CallFunction` replaces 22 individual opcodes (CallSin through CallLnGamma)
+by encoding the function index as a second byte. `CallMatrixFunc` similarly
+replaces 6 individual opcodes (CallDet through CallAdjugate).
+
 ## CORDIC — Sine and Cosine
 
-CORDIC (COordinate Rotation DIgital Computer) computes $\sin\theta$ and $\cos\theta$ simultaneously using only shifts, adds, and a small lookup table.
+CORDIC (COordinate Rotation DIgital Computer) computes $\sin\theta$ and
+$\cos\theta$ simultaneously using only shifts, adds, and a small lookup table.
 
 ### Algorithm
 
-The rotation-mode CORDIC iteratively rotates a vector $(x,y)$ toward the target angle $z$. Starting from:
+The rotation-mode CORDIC iteratively rotates a vector $(x,y)$ toward the
+target angle $z$. Starting from:
 
 $$x_0 = K \approx 0.60725,\quad y_0 = 0,\quad z_0 = \theta$$
 
-where $K = \prod_{i=0}^{n-1} \cos(\arctan 2^{-i})$ is the CORDIC gain pre-multiplied into $x_0$ so the result is gain-compensated. At each iteration $i = 0,\dots,21$:
+where $K = \prod_{i=0}^{n-1} \cos(\arctan 2^{-i})$ is the CORDIC gain
+pre-multiplied into $x_0$ so the result is gain-compensated. At each
+iteration $i = 0,\dots,21$:
 
 $$
 \begin{aligned}
@@ -93,7 +148,8 @@ z_{i+1} &= z_i - \sigma_i \cdot \arctan(2^{-i})
 \end{aligned}
 $$
 
-After 22 iterations the residual angle is $|\delta| = |z_{22}| < 2^{-21} \approx 4.77 \times 10^{-7}$ radians.
+After 22 iterations the residual angle is $|\delta| = |z_{22}| < 2^{-21}
+\approx 4.77 \times 10^{-7}$ radians.
 
 ### Taylor Correction
 
@@ -115,95 +171,42 @@ y_{\text{final}} &= y + x \cdot \delta
 \end{aligned}
 $$
 
-This reduces worst-case error from $|\delta| < 4.77 \times 10^{-7}$ to $O(\delta^2) < 2.3 \times 10^{-13}$ — well below the $10^{-6}$ requirement.
+This reduces worst-case error from $|\delta| < 4.77 \times 10^{-7}$ to
+$O(\delta^2) < 2.3 \times 10^{-13}$.
 
 ### Quadrant Folding
 
-Angles outside $(-\pi/2, \pi/2)$ are folded using reflection identities:
-
-$$
-\begin{aligned}
-\sin(\pi - a) &= \sin a, \quad \cos(\pi - a) = -\cos a \\
-\sin(-\pi + a) &= -\sin a, \quad \cos(-\pi + a) = -\cos a
-\end{aligned}
-$$
-
-The function `reduce_angle_to_principal` normalises any angle to $[-\pi, \pi]$ using `angle % TWO_PI` then at most one conditional add or subtract.
+Angles outside $(-\pi/2, \pi/2)$ are folded using reflection identities.
+The function `reduce_angle_to_principal` normalises any angle to $[-\pi, \pi]$
+using `angle % TWO_PI`.
 
 ### Arctan Table
 
-22 entries for $i = 0,\dots,21$ (176 bytes):
-
-| $i$ | $\arctan(2^{-i})$ | Q31.32 value |
-|-----|-------------------|--------------|
-| 0   | $0.78539816$      | 3,373,259,426 |
-| 1   | $0.46364761$      | 1,991,351,318 |
-| 2   | $0.24497866$      | 1,052,175,346 |
-| 3   | $0.12435499$      | 534,100,635   |
-| 4   | $0.06241881$      | 268,086,748   |
-| 5   | $0.03123983$      | 134,174,063   |
-| 6   | $0.01562373$      | 67,103,403    |
-| 7   | $0.00781234$      | 33,553,749    |
-| 8--21 | (halving)     | 16,777,131 down to 2,048 |
+22 entries for $i = 0,\dots,21$ (176 bytes), each entry $\arctan(2^{-i})$ in
+Q31.32. Values range from 3,373,259,426 ($\arctan 1$) down to 2,048
+($\arctan 2^{-21}$).
 
 ## Arctangent — Rational Minimax
 
-The arctangent uses a rational minimax approximation (Ganssle-Homer form) rather than CORDIC vectoring mode, saving $\sim 700$ cycles.
-
-### Algorithm
+The arctangent uses a rational minimax approximation (Ganssle-Homer form)
+rather than CORDIC vectoring mode, saving $\sim 700$ cycles. Max error
+$< 1.6 \times 10^{-10}$ radians.
 
 For $|x| \le 1$:
 
 $$r = |x|, \quad t = r^2$$
 
 $$
-\begin{aligned}
-P(t) &= p_0 + p_2 t + p_4 t^2 + p_6 t^3 + p_8 t^4 \\
-Q(t) &= 1 + q_2 t + q_4 t^2 + q_6 t^3 + q_8 t^4
-\end{aligned}
+\operatorname{atan}(r) \approx r \cdot \frac{p_0 + p_2 t + p_4 t^2 + p_6 t^3 + p_8 t^4}{1 + q_2 t + q_4 t^2 + q_6 t^3 + q_8 t^4}
 $$
 
-$$\operatorname{atan}(r) = r \cdot \frac{P(t)}{Q(t)}$$
-
-Both polynomials are evaluated via Horner's method:
-
-```
-P = (((p8·t + p6)·t + p4)·t + p2)·t + p0
-Q = (((q8·t + q6)·t + q4)·t + q2)·t + 1
-```
-
 For $|x| > 1$, the identity $\operatorname{atan}(x) = \pi/2 - \operatorname{atan}(1/x)$
-is used. The result is negated if the input was negative.
-
-### Coefficients
-
-Least-squares fit on Chebyshev nodes, Q31.32 quantised:
-
-| Constant | Float value |
-|----------|-------------|
-| $p_0$    | $1.0000000000$ |
-| $p_2$    | $2.0163416525$ |
-| $p_4$    | $1.2131029095$ |
-| $p_6$    | $0.2162130075$ |
-| $p_8$    | $0.0052570247$ |
-| $q_2$    | $2.3496750128$ |
-| $q_4$    | $1.7963273742$ |
-| $q_6$    | $0.4879158549$ |
-| $q_8$    | $0.0331622299$ |
-
-Max error: $< 1.6 \times 10^{-10}$ radians. Cycle count: $\sim 700$ (was $\sim 1400$ for CORDIC vectoring).
+is used. Coefficients are least-squares fit on Chebyshev nodes, Q31.32 quantised.
 
 ## $\operatorname{atan2}(y, x)$
 
-Four-quadrant arctangent using the smaller of $|y/x|$ or $|x/y|$ to avoid divide overflow:
-
-$$
-\text{ratio} = \frac{\min(|y|, |x|)}{\max(|y|, |x|)},\quad \text{angle} = \operatorname{atan}(\text{ratio})
-$$
-
-The angle is then corrected into the proper quadrant based on the signs of $y$ and $x$.
-
-Special cases: $x = 0, y > 0 \to \pi/2$; $x = 0, y < 0 \to -\pi/2$; $x = 0, y = 0 \to 0$.
+Uses the smaller of $|y/x|$ or $|x/y|$ to avoid divide overflow, then corrects
+into the proper quadrant based on signs of $y$ and $x$.
 
 ## $\operatorname{asin}(x)$ and $\operatorname{acos}(x)$
 
@@ -214,61 +217,18 @@ $$
 
 Domain: $|x| \le 1$. Returns `None` otherwise.
 
-## Tangent
-
-$$\tan\theta = \frac{\sin\theta}{\cos\theta}$$
-
-Returns `None` if $|\cos\theta| < 10^{-4}$ (safety margin near $\pi/2$ poles).
-
 ## Exponential — $e^x$
 
-### Range reduction
-
-$$x = k \cdot \ln 2 + r, \quad |r| \le \frac{\ln 2}{2}$$
-
-where $k = \lfloor x / \ln 2 \rfloor$ (truncated toward zero). Then:
-
-$$e^x = e^r \cdot 2^k$$
-
-### Minimax polynomial
-
-$e^r$ is evaluated via a degree-7 minimax polynomial in Horner form:
-
-$$
-e^r \approx c_0 + r(c_1 + r(c_2 + r(c_3 + r(c_4 + r(c_5 + r(c_6 + r \cdot c_7))))))
-$$
-
-Maximum error $\sim 5.95 \times 10^{-11}$. For $x < 0$, the identity $e^x = 1/e^{-x}$ is used.
-
-### Overflow/underflow
-
-- $k < 0$ or $k > 30$: returns `None` (overflow), overflow info stored for display
-- $x < -31\ln 2 \approx -21.5$: returns `Some(0)` (underflow)
+Range reduction to $x = k \cdot \ln 2 + r$, $|r| \le \ln 2 / 2$, then
+degree-7 minimax polynomial via Horner. Max error $\sim 5.95 \times 10^{-11}$.
+Returns `None` for overflow ($k > 30$), `Some(0)` for underflow
+($x < -21.5$).
 
 ## Natural Logarithm — $\ln x$
 
-### Range reduction
-
-Normalise $x = 2^k \cdot m$ where $m \in [1/\sqrt{2}, \sqrt{2})$ via shift loops
-and a conditional check against $\sqrt{2}$. Then $t = m - 1$ so:
-
-$$|t| \le \sqrt{2} - 1 \approx 0.414$$
-
-### Minimax polynomial
-
-Evaluated as $t \cdot p(t)$ where $p(t) \approx \ln(1+t)/t$ via degree-9 polynomial (degree-10 overall):
-
-$$
-\ln(1+t) \approx c_0 + t(c_1 + t(c_2 + t(c_3 + t(c_4 + t(c_5 + t(c_6 + t(c_7 + t(c_8 + t(c_9 + t \cdot c_{10}))))))))))
-$$
-
-$c_0 = 0$ ensures $\ln(1) = 0$ exactly. Maximum error $\sim 1.62 \times 10^{-9}$.
-
-### Final result
-
-$$\ln x = k \cdot \ln 2 + \ln(1 + t)$$
-
-Returns `None` for $x \le 0$.
+Range reduction to $x = 2^k \cdot m$ with $m \in [1/\sqrt{2}, \sqrt{2})$,
+then degree-10 minimax polynomial $\ln(1+t) \approx t \cdot p(t)$.
+Max error $\sim 1.62 \times 10^{-9}$. Returns `None` for $x \le 0$.
 
 ## $\log_{10} x$ and $\log_2 x$
 
@@ -276,423 +236,126 @@ $$\log_{10} x = \frac{\ln x}{\ln 10}, \quad \log_2 x = \frac{\ln x}{\ln 2}$$
 
 ## Square Root — $\sqrt{x}$
 
-Uses a CLZ-based initial guess for the reciprocal square root, followed by
-Newton-Raphson refinement.
-
-### Initial guess
-
-Normalise $x = 2^p \cdot m$ where $m \in [1, 2)$ via `leading_zeros()`. Index
-a 32-entry midpoint LUT for $1/\sqrt{m}$, then apply exponent scaling:
-
-$$
-y_0 = \begin{cases}
-\text{LUT}[i] \gg e/2               & e \ge 0,\ e\ \text{even} \\
-\text{LUT}[i] \cdot 1/\sqrt{2} \gg (e-1)/2 & e \ge 0,\ e\ \text{odd} \\
-\text{LUT}[i] \ll -e/2              & e < 0,\ -e\ \text{even} \\
-\text{LUT}[i] \cdot \sqrt{2} \ll (-e-1)/2  & e < 0,\ -e\ \text{odd}
-\end{cases}
-$$
-
-where $e = p - 32$. Initial error $< 2\%$.
-
-### Newton-Raphson on $1/\sqrt{x}$
-
-Three iterations of:
-
-$$y_{n+1} = \frac{1}{2} \cdot y_n \cdot (3 - x \cdot y_n^2)$$
-
-### Final Newton step on $\sqrt{x}$
-
-$$s = x \cdot y_3, \quad s \leftarrow \frac{1}{2}\left(s + \frac{x}{s}\right)$$
-
-Max relative error $\sim 3.7 \times 10^{-8}$. Cycle count $\sim 250$ (was $\sim 800$).
+CLZ-based initial guess via 32-entry LUT ($<2\%$ error), 3 Newton iterations
+on $1/\sqrt{x}$, then 1 final Newton step on $\sqrt{x}$. Max relative error
+$\sim 3.7 \times 10^{-8}$.
 
 ## Integer Power
 
-Binary exponentiation (exponentiation by squaring):
-
-```
-function integer_power(base, exp):
-    result = 1
-    while exp > 0:
-        if exp & 1: result *= base
-        base *= base
-        exp >>= 1
-    return result
-```
-
-For negative exponents, compute $1/\text{integer\_power}(base, -\exp)$.
+Binary exponentiation (exponentiation by squaring), $O(\log |\exp|)$ multiplies.
+Negative exponents compute $1/\text{integer\_power}(\text{base}, -\exp)$.
 
 ## Nth Root
 
-For integer $n \ge 3$, Newton iteration:
-
-$$x_{k+1} = \frac{(n-1) \cdot x_k + x / x_k^{n-1}}{n}$$
-
-12 iterations, initial guess $x_0 = \max(x/2, 1)$. Delegates to `sqrt` for $n=2$,
-to `exp(ln(x)/n)` for non-integer $n$, and to $1/\text{nthroot}(x, -n)$ for negative $n$.
+Newton iteration for integer $n \ge 3$, delegates to `sqrt` for $n=2$, to
+$\exp(\ln(x)/n)$ for non-integer $n$.
 
 ## Hyperbolic Functions
 
-$$
-\begin{aligned}
-\sinh x &= \frac{e^x - e^{-x}}{2} \\
-\cosh x &= \frac{e^x + e^{-x}}{2} \\
-\tanh x &= \frac{e^x - e^{-x}}{e^x + e^{-x}} = \frac{\sinh x}{\cosh x}
-\end{aligned}
-$$
+All identity-based: $\sinh x = (e^x - e^{-x})/2$,
+$\cosh x = (e^x + e^{-x})/2$, $\tanh x = \sinh x / \cosh x$.
+$\tanh$ saturates at $|x| \ge 12$ to $\pm 1$.
 
-$\tanh$ saturates: $|x| \ge 12 \to \pm 1$ (correction term $< 1$ ULP).
+Inverse hyperbolic functions use standard logarithmic forms.
 
-### Inverse Hyperbolic Functions
+## Complex Arithmetic
 
-$$
-\begin{aligned}
-\operatorname{asinh} x &= \ln\left(x + \sqrt{x^2 + 1}\right) \\
-\operatorname{acosh} x &= \ln\left(x + \sqrt{x^2 - 1}\right),\quad x \ge 1 \\
-\operatorname{atanh} x &= \frac{1}{2} \ln\left(\frac{1 + x}{1 - x}\right),\quad |x| < 1
-\end{aligned}
-$$
+Complex multiplication uses the direct formula. Complex division uses
+**Smith's overflow-safe formula** — dividing through by the larger component
+($|c|$ or $|d|$) avoids the intermediate overflow of the naive formula.
+All complex transcendentals use analytic continuations (see the source for
+the full formula table in `complex.rs`).
 
-## Complex Arithmetic — `complex.rs`
+## Scientific Notation (Scientific mode)
 
-The `Complex(i64, i64)` type mirrors the real Q31.32 contract. Addition and
-subtraction use saturating arithmetic.
+Scientific notation stores values as a pair `(mantissa, exponent)` where the
+mantissa is a Q31.32 value normalised to $[1.0, 10.0)$ and the exponent is an
+integer in $[-99, 99]$.
 
-### Smith's Complex Division
-
-The naive formula $(a+bi)/(c+di) = (ac+bd)/(c^2+d^2) + (bc-ad)/(c^2+d^2)i$
-overflows when $|c|,|d| > \sqrt{2^{31}} \approx 46340$. Smith's robust
-algorithm avoids this by dividing through by the larger component:
-
-If $|c| \ge |d|$:
-
-$$r = \frac{d}{c},\quad \text{den} = c + d \cdot r$$
-
-$$
-\operatorname{Re} = \frac{a + b \cdot r}{\text{den}},\quad
-\operatorname{Im} = \frac{b - a \cdot r}{\text{den}}
-$$
-
-If $|d| > |c|$:
-
-$$r = \frac{c}{d},\quad \text{den} = c \cdot r + d$$
-
-$$
-\operatorname{Re} = \frac{a \cdot r + b}{\text{den}},\quad
-\operatorname{Im} = \frac{b \cdot r - a}{\text{den}}
-$$
-
-All intermediates bounded by $\max(|a|,|b|,|c|,|d|)$. Handles values up to
-$\sim 10^9$ safely ($\sim 23000\times$ improvement over naive).
-
-### Complex Transcendentals
-
-All use analytic continuations. Key formulas:
-
-| Function | Formula |
-|----------|---------|
-| $\sin(a+bi)$ | $\sin a \cosh b + i \cos a \sinh b$ |
-| $\cos(a+bi)$ | $\cos a \cosh b - i \sin a \sinh b$ |
-| $\tan(a+bi)$ | $\sin(a+bi) / \cos(a+bi)$ |
-| $\operatorname{asin} z$ | $-i \ln(iz + \sqrt{1 - z^2})$ |
-| $\operatorname{acos} z$ | $-i \ln(z + i\sqrt{1 - z^2})$ |
-| $\operatorname{atan} z$ | $\frac{i}{2} \ln\frac{i+z}{i-z}$ |
-| $\sinh(a+bi)$ | $\sinh a \cos b + i \cosh a \sin b$ |
-| $\cosh(a+bi)$ | $\cosh a \cos b + i \sinh a \sin b$ |
-| $\tanh z$ | $\sinh z / \cosh z$ |
-| $\operatorname{asinh} z$ | $\ln(z + \sqrt{z^2 + 1})$ |
-| $\operatorname{acosh} z$ | $\ln(z + \sqrt{z-1}\sqrt{z+1})$ |
-| $\operatorname{atanh} z$ | $\frac{1}{2} \ln\frac{1+z}{1-z}$ |
-| $\exp(a+bi)$ | $e^a(\cos b + i\sin b)$ |
-| $\ln z$ | $\ln\lvert z\rvert + i \arg z$ |
-| $z^w$ | $\exp(w \cdot \ln z)$ |
-
-Complex square root:
-
-$$
-\sqrt{z} = \begin{cases}
-\sqrt{\operatorname{Re}(z)} & \operatorname{Im}(z)=0,\ \operatorname{Re}(z)\ge 0 \\
-i\sqrt{|\operatorname{Re}(z)|} & \operatorname{Im}(z)=0,\ \operatorname{Re}(z)<0 \\
-\sqrt{\frac{|z|+\operatorname{Re}(z)}{2}} + i \cdot \operatorname{sign}(\operatorname{Im}(z)) \sqrt{\frac{|z|-\operatorname{Re}(z)}{2}} & \text{otherwise}
-\end{cases}
-$$
-
-## Lexer — `lexer.rs`
-
-The lexer tokenises expressions via `parse_identifier()`, which returns direct
-function tokens (`Token::FuncSin`, `Token::FuncBinomP`, etc.) — the parser
-does NOT reassemble identifiers from raw characters. Identifiers are
-case-insensitive in practice (converted to lowercase for matching). Single
-uppercase letters `A`–`Z` are variable registers.
-
-Unary minus detection checks whether the previous token is an operator, opening
-parenthesis, comma, or the start of expression. Numbers are parsed as integer
-plus optional fractional part, converted to Q31.32 via i128 arithmetic. The `i`
-suffix for the imaginary unit is emitted as `Token::ConstI` in Advanced mode only.
-
-Max tokens: 32. Max identifier length: 8 bytes.
-
-## Parser — `parser.rs`
-
-The parser uses recursive descent following PEMDAS precedence:
+### Literal syntax
 
 ```
-expression  = term   (( '+' | '−' ) term)*
-term        = power  (( '*' | '/' | '%' | implicit_mult ) power)*
-power       = unary  ( '^' power )*              ← right-associative
-unary       = '−' unary | primary
-primary     = NUMBER | CONSTANT | VARIABLE
-            | FUNC '(' expr ')'
-            | THREE_ARG_FUNC '(' expr ',' expr ',' expr ')'
-            | TWO_ARG_FUNC '(' expr ',' expr ')'
-            | LOOP '(' expr ',' VAR ',' expr ',' expr ')'
-            | sto '(' expr ',' VAR ')'
-            | '(' expr ')'
+1.5E+10     → mantissa = 1.5·SCALE, exponent = +10
+2E-5        → mantissa = 2.0·SCALE, exponent = -5
+9.99E+99    → mantissa = 9.99·SCALE, exponent = +99
 ```
 
-The AST is a flat arena: `[AstNode; 64]` allocated in `.bss`, never
-heap-allocated. Child references are array indices.
-
-AstNode variants: `Literal`, `Constant`, `Variable`, `BinaryOperation`,
-`UnaryNegation`, `FunctionCall`, `ThreeArgFunction`, `TwoArgFunction`,
-`Store`, `LoopAggregate`.
-
-## Evaluator — `evaluator.rs`
-
-The recursive `evaluate_node` dispatches on the AstNode variant. For real-argument
-sin/cos/tan/asin/acos/atan, the evaluator applies deg↔rad conversion via
-`degrees_to_radians` or `radians_to_degrees` when `AngleMode` is `Degrees`.
-Complex-argument and hyperbolic functions always use radians.
-
-### Overflow display
-
-When a function result exceeds the Q31.32 range, the evaluator stores a
-log10 estimate and the sign in a thread-local static before returning `None`.
-At the top-level `evaluate_tree` return, the stored overflow info is used
-to produce `EvalResult::Overflow { mantissa, exponent, negative }`.
-
-The overflow info is also adjusted by binary operations:
-
-| Expression | Behaviour |
-|------------|-----------|
-| `sinh(30)/2` | Subtracts $\log_{10}2$ from the log10 estimate; mantissa halves |
-| `sinh(30)×2` | Adds $\log_{10}2$; exponent increases by 1 |
-| `sinh(30)²` | Multiplies log10 estimate by 2 |
-| `‑sinh(30)` | Flips the negative flag |
-| `5/sinh(30)` | Clears overflow (result is ~0, in range) |
-| `2^sinh(30)` | Clears overflow (uncomputable from log10 alone) |
-
-The display string is generated by `engine::format_overflow()`, which produces
-`mantissaE±exp` (e.g. `1.34406E+43`). The exponent is capped at ±99 — if the
-true exponent exceeds this range, `format_overflow` returns `None` and the
-runtime displays `! overflow`. The capped string is always ≤14 characters,
-never requiring horizontal scrolling on the 15‑character result line.
-
-Internal overflow estimation in `multiply`, `divide`, and `power` uses
-`fp::log10` (full Q31.32 precision), replacing a prior integer-only
-approximation.
-
-### Adaptive Simpson Integration
-
-Replaces the original fixed 100-interval Simpson's rule. Uses recursive bisection
-with error control:
-
-$$S(a,b) = \frac{h}{6}\bigl(f(a) + 4f(m) + f(b)\bigr),\quad h = b-a,\ m = \frac{a+b}{2}$$
-
-Error estimate:
-
-$$\bigl|S(a,m) + S(m,b) - S(a,b)\bigr| < 15 \cdot \tau$$
-
-If the estimate exceeds the tolerance, each half is subdivided recursively with
-$\tau_{\text{child}} = \max(\tau/2, 1)$. Parameters:
-
-| Parameter | Value | Meaning |
-|-----------|-------|---------|
-| $\tau$ (ADAPTIVE_TOL) | 43 Q31.32 ULP ($\approx 10^{-8}$) | Per-subinterval tolerance |
-| Max depth | 20 | Maximum bisection depth |
-| Max evals | 2000 | Maximum function evaluations |
-| Max stack | 24 | Maximum pending subintervals |
-
-Results are snapped to the nearest integer when within `INTEGRATION_SNAP_THRESHOLD`
-(4295 Q31.32 ULP, $\approx 10^{-6}$). The practical accuracy floor for
-steep integrands (e.g. $\int_0^{10}\sinh x\,dx$) is $\sim 2\times10^{-6}$,
-set by `natural_exp` precision propagating through thousands of evaluations
-rather than by Simpson convergence.
-
-### Loop aggregates
-
-- `sum(body, var, a, b)`: iterates $k$ from $a$ to $b$, writes $k$ as a Q31.32
-  integer into the loop-variable register, evaluates the body, and accumulates
-  the sum.
-- `int(body, var, a, b)`: adaptive Simpson integration.
-- `sto(value, var)`: writes value to the register identified by var, returns
-  the value.
-
-Loop variables use closure-wrap save/restore — one `Complex` (16 bytes) is saved
-on the stack before the loop and restored after, rather than cloning the entire
-`VariableStore` (~440 bytes).
-
-## Statistical Distributions — `distributions.rs`
-
-### $\ln(k!)$ — Log-Factorial
-
-For $k \le 20$: exact lookup table (21 entries, 168 bytes).
-
-For $k > 20$: Stirling's asymptotic series:
-
-$$
-\ln(k!) = k\ln k - k + \frac{1}{2}\ln(2\pi k) + \frac{1}{12k} - \frac{1}{360k^3} + \frac{1}{1260k^5}
-$$
-
-Higher-order terms are skipped if they would overflow; at $k \ge 21$ the omitted
-terms are $< 10^{-10}$, well below the $10^{-6}$ requirement.
-
-### $\ln\Gamma(z)$ — Log-Gamma
-
-- **Integer $z$**: delegates to $\ln\Gamma(z) = \ln((z-1)!)$ via `ln_factorial`.
-- **Half-integer $z = n + \tfrac{1}{2}$**: closed form:
-
-$$\ln\Gamma\!\left(n+\frac{1}{2}\right) = \ln((2n)!) - n\ln 4 - \ln(n!) + \frac{1}{2}\ln\pi$$
-
-- **$z < 0.5$**: Euler reflection formula:
-
-$$\ln\Gamma(z) = \ln\pi - \ln(\sin(\pi z)) - \ln\Gamma(1-z)$$
-
-- **$0.5 \le z < 5$**: recurrence $\ln\Gamma(z) = \ln\Gamma(z+1) - \ln z$ until $z \ge 5$.
-- **$z \ge 5$**: Stirling's asymptotic expansion:
-
-$$
-\ln\Gamma(z) = (z-\tfrac{1}{2})\ln z - z + \tfrac{1}{2}\ln(2\pi) + \frac{1}{12z} - \frac{1}{360z^3} + \frac{1}{1260z^5} - \frac{1}{1680z^7}
-$$
-
-Correction terms computed as $(1/n) \times (1/z^p)$ to avoid overflow; terms that
-overflow are skipped (negligible at overflow point).
-
-### Binomial PMF
-
-$$P(X=k) = \binom{n}{k} p^k (1-p)^{n-k}$$
-
-Computed in log space:
-
-$$\ln P = \ln(n!) - \ln(k!) - \ln((n-k)!) + k\ln p + (n-k)\ln(1-p)$$
-
-$$P = \exp(\ln P)$$
-
-### Poisson PMF
-
-$$P(X=k) = \frac{\lambda^k e^{-\lambda}}{k!}$$
-
-Log-space computation:
-
-$$\ln P = k\ln\lambda - \lambda - \ln(k!)$$
-
-$$P = \exp(\ln P)$$
-
-### Chi-Squared CDF
-
-$$P(X \le x; k) = \frac{1}{\Gamma(k/2)}\gamma\!\left(\frac{k}{2}, \frac{x}{2}\right)$$
-
-where $\gamma$ is the lower incomplete gamma function. Implemented via series
-expansion:
-
-$$\gamma(a, x) = e^{-x} x^a \sum_{n=0}^{\infty} \frac{x^n}{a(a+1)\cdots(a+n)}$$
-
-Prefactor computed in log space: $\exp(-x + a\ln x - \ln\Gamma(a))$. Series
-converges when $|\text{term}| < |\text{sum}| / 10^9$. Max 60 terms.
-
-## Function Reference
-
-All function names in the expression language are lowercase.
-
-| Expression | What it does |
-|---|---|
-| `sin(x)` | Sine of x (radians or degrees) |
-| `cos(x)` | Cosine of x |
-| `tan(x)` | Tangent of x (returns None near $\pm\pi/2$) |
-| `asin(x)` | Inverse sine, result in current angle mode |
-| `acos(x)` | Inverse cosine, result in current angle mode |
-| `atan(x)` | Inverse tangent, result in current angle mode |
-| `sinh(x)` | Hyperbolic sine (always radians) |
-| `cosh(x)` | Hyperbolic cosine (always radians) |
-| `tanh(x)` | Hyperbolic tangent (always radians) |
-| `asinh(x)` | Inverse hyperbolic sine |
-| `acosh(x)` | Inverse hyperbolic cosine (domain: $x \ge 1$) |
-| `atanh(x)` | Inverse hyperbolic tangent (domain: $\lvert x\rvert < 1$) |
-| `sqrt(x)` | Square root |
-| `abs(x)` | Absolute value |
-| `exp(x)` | $e^x$ |
-| `ln(x)` | Natural log ($x > 0$) |
-| `log(x)` | Base-10 log ($x > 0$) |
-| `log2(x)` | Base-2 log ($x > 0$) |
-| `floor(x)` | Round toward $-\infty$ |
-| `ceil(x)` | Round toward $+\infty$ |
-| `round(x)` | Round to nearest (half away from zero) |
-| `deg(x)` | Convert degrees $\to$ radians |
-| `rad(x)` | Convert radians $\to$ degrees |
-| `nthroot(x,n)` | $n$-th root of x |
-| `lngamma(x)` | $\ln\Gamma(x)$, $x > 0$ |
-| `binomp(n,k,p)` | Binomial PMF: $P(X=k)$, $X\sim\text{Binomial}(n,p)$ |
-| `poissonp(\lambda,k)` | Poisson PMF: $P(X=k)$, $X\sim\text{Poisson}(\lambda)$ |
-| `chicdf(x,k)` | Chi-squared CDF: $P(X\le x)$, $X\sim\chi^2(k)$ |
-| `sum(body,var,a,b)` | $\sum$: sum body over $[a, b]$ |
-| `int(body,var,a,b)` | $\int$: adaptive Simpson integration over $[a, b]$ |
-| `sto(v,reg)` | Store $v$ into register reg |
-| `Ans` | Last computed answer |
-| `A`–`Z` | User registers (26 registers) |
-| `pi` | $\pi$ constant |
-| `e` | Euler's number |
-
-## Deg / Rad Mode
-
-The evaluator automatically applies angle-mode conversion for real-argument
-sin, cos, tan, asin, acos, and atan. When `AngleMode` is `Degrees`,
-sin/cos/tan convert the input from degrees to radians before calling the
-trig routines, and asin/acos/atan convert the radian result back to degrees
-afterward. Hyperbolic functions and complex-argument trigonometric functions
-ignore angle mode entirely and always operate in radians.
-
-The `deg(x)` function explicitly converts from degrees to radians
-($\times \pi/180$). The `rad(x)` function converts from radians to degrees
-($\times 180/\pi$).
-
-## Key Design Decisions
-
-**CORDIC over LUT**: The CORDIC arctan table consumes only 176 bytes of
-storage, whereas a full kilobyte-scale LUT would be needed to cover all
-transcendental functions at comparable precision. Twenty-two iterations +
-Taylor correction converge to full Q31.32 precision and complete in
-interactive time on a 12 MHz Cortex-M3.
-
-**Minimax over Taylor for exp/ln**: Minimax polynomials give the same accuracy
-with fewer terms (7 vs 12 for exp, 10 vs 20 for ln) and simpler Horner
-evaluation. The coefficients are precomputed via Chebyshev approximation and
-hard-coded.
-
-**Rational minimax over CORDIC for atan**: The rational approximation is $\sim
-2\times$ faster ($\sim 700$ vs $\sim 1400$ cycles) and more accurate ($< 1.6
-\times 10^{-10}$ vs $\sim 4.8 \times 10^{-7}$ rad residual).
-
-**CLZ rsqrt over integer sqrt**: The CLZ + 32-entry LUT approach is $\sim
-3.2\times$ faster ($\sim 250$ vs $\sim 800$ cycles) than `u64::isqrt` + 10
-Newton iterations, with comparable accuracy.
-
-**Smith's complex division**: Avoids overflow at $|c|,|d| > \sim 46000$ that
-would plague the naive formula, extending safe division to $\sim 10^9$.
-
-**Log-space probability**: Computing $C(1000, 500)$ directly overflows Q31.32,
-but $\ln C(1000, 500)$ fits easily. Every binomial and Poisson PMF accumulates
-in the log domain and exponentiates only at the final step.
-
-**Hybrid ln_factorial**: A 21-entry lookup table (168 bytes) covers $k = 0..20$
-with zero computation. Stirling's series handles $k \ge 21$ with overflow-safe
-term computation. This eliminates Lanczos for the most common path.
-
-**Flat arena AST**: The `[AstNode; 64]` arena occupies 3,088 bytes in `.bss`,
-never allocates, uses index-based child references instead of pointers, and
-provides bounded worst-case parse time — the parser simply rejects expressions
-exceeding 64 nodes.
-
-**Closure-wrap over VariableStore clone**: Saving one `Complex` (16 bytes) for
-loop variable shadowing avoids cloning the entire `VariableStore` ($\sim 440$
-bytes) on each loop invocation.
+Fractional exponents (e.g. `2E1.2`) are rejected as lex errors — the
+exponent must be an integer.
+
+### Arithmetic rules
+
+| Operation | Formula | Renormalisation |
+|-----------|---------|-----------------|
+| $S_1 \cdot S_2$ | $(m_1 \cdot m_2) \times 10^{e_1+e_2}$ | Renormalise mantissa to $[1,10)$ |
+| $S_1 / S_2$ | $(m_1 / m_2) \times 10^{e_1-e_2}$ | Renormalise mantissa to $[1,10)$ |
+| $S_1 + S_2$ | Align exponents, add mantissas | Renormalise; small addend negligible if $|e_1-e_2| > 9$ |
+| $S_1 - S_2$ | Align exponents, subtract mantissas | Renormalise; result is scalar 0 if mantissas cancel |
+| $S^{\,k}$ | $(m^{\,k}) \times 10^{e \cdot k}$ | Compute via $pow(m, k)$, then multiply exponent |
+
+### Auto-conversion to Scalar
+
+When a Scientific result has a mantissa with no fractional bits
+(`mantissa & (SCALE-1) == 0`) and exponent $0 \le e \le 8$, it is
+automatically converted to a plain Scalar via $m \times 10^e$.
+For example: `1E5` → `100000`, `9E99*9E-99` → `81`.
+Fractional mantissas (like `8.1E7`) stay in Scientific notation to avoid
+amplifying the inherent $1/10$ truncation error.
+
+### Overflow
+
+If a computation produces $|e| > 99$, the value cannot be stored or displayed.
+The runtime prints `! overflow`. This is a hard limit enforced at every
+arithmetic step and at literal construction.
+
+## Matrix Operations (Matrix mode)
+
+Matrices are stored as a single `Matrix` type with `kind = Mat`. Max
+dimension 4×4 (16 cells). Operations:
+
+| Operation | Description | Complexity |
+|-----------|-------------|------------|
+| $A + B$ | Elementwise saturating add | $O(n^2)$ |
+| $A - B$ | Elementwise saturating subtract | $O(n^2)$ |
+| $A \cdot B$ | Standard matrix multiply, i128 intermediates | $O(n^3)$ |
+| $k \cdot A$ | Scalar broadcast (both orders) | $O(n^2)$ |
+| $\det(A)$ | 1×1–3×3 direct formula, 4×4 Gaussian elimination | $O(n^3)$ |
+| $A^\top$ | Transpose | $O(n^2)$ |
+| $A^{-1}$ | Adjugate / determinant | $O(n^3)$ |
+| $\operatorname{cofactor}(A)$ | Minor → determinant → sign | $O(n^4)$ |
+| $\operatorname{adj}(A)$ | Transpose of cofactor | $O(n^3)$ |
+| $\operatorname{identity}(n)$ | Generate $I_n$ | $O(n)$ |
+
+### Matrix literal syntax
+
+```
+[(1, 2)(3, 4)]   → [1 2; 3 4]   (2×2)
+[(1,2,3)]        → [1 2 3]      (1×3)
+[(1)(2)(3)]      → [1; 2; 3]    (3×1)
+```
+
+Rows are comma-separated inside parentheses, cells are comma-separated inside
+a row. The entire matrix is wrapped in square brackets.
+
+## 4-Digit Constants
+
+```python
+SCALE = 2**32
+
+def to_q3132(x: float) -> int:
+    return round(x * SCALE)
+
+def from_q3132(x: int) -> float:
+    return x / SCALE
+```
+
+| Constant           | Q31.32 decimal       | Float equivalent           |
+|--------------------|----------------------|---------------------------|
+| FIXED_ONE          | 4,294,967,296        | 1.0                       |
+| FIXED_PI           | 13,493,037,705       | $\pi$                     |
+| FIXED_E            | 11,674,931,555       | $e$                       |
+| FIXED_LN2          | 2,977,044,472        | $\ln 2$                   |
+| FIXED_LN10         | 9,889,527,671        | $\ln 10$                  |
+| FIXED_PI_OVER_180  | 74,961,321           | $\pi/180$                 |
+| FIXED_180_OVER_PI  | 246,083,499,208      | $180/\pi$                 |
+| CORDIC_GAIN        | 2,608,131,496        | $K \approx 0.60725$       |

@@ -15,12 +15,17 @@ slug: /
 Features a Q31.32 fixed-point math engine with CORDIC + Taylor-corrected trig,
 minimax polynomial exp/log, CLZ-based square root, rational minimax arctangent,
 Smith's robust complex division, Stirling's log-gamma, overflow-aware scientific
-notation, and adaptive Simpson integration. No heap, no allocator, no OS.
+notation, adaptive Simpson integration, matrix operations up to 4x4, and a
+bytecode VM evaluator with zero C stack growth. No heap, no allocator, no OS.
 
 [![Build Status](https://github.com/NumCore/NumCore/actions/workflows/ci.yml/badge.svg)](https://github.com/NumCore/NumCore/actions/workflows/ci.yml)
 
 ## Project highlights
 
+- **Bytecode VM evaluation** — recursive-descent compiler emits opcodes into a
+  256 B buffer; flat `execute()` loop with 16-entry value stack eliminates all
+  C recursion. Expressions like `1+1+1+1+1+1+1+1+1+1` work correctly (the
+  previous recursive evaluator overflowed at depth 4, silently corrupting `.bss`).
 - **Q31.32 fixed-point** — i64 storage, i128 intermediates, saturating
   arithmetic, `EvalResult` error model (`Value` / `Overflow` / `DomainError`),
   precision of $2^{-32}\approx2.33\times10^{-10}$ (~9 decimal digits)
@@ -36,50 +41,51 @@ notation, and adaptive Simpson integration. No heap, no allocator, no OS.
   handles values up to $\sim10^9$ in Q31.32
 - **Stirling's ln gamma** — asymptotic series $z\ge5$ with recurrence and
   reflection formula, $\sim6$ ULP worst-case error
-- **Adaptive Simpson integration** — recursive bisection, $\tau\approx10^{-8}$,
+- **Adaptive Simpson integration** — iterative bisection, $\tau\approx10^{-8}$,
   max depth 20; integrates $\int_0^{10}\sinh x\,dx$ accurate to $<2\times10^{-6}$
 - **Overflow-aware scientific notation** — results exceeding Q31.32 range
-  display as `1.34406E+43` instead of `! error`; binary operations adjust
-  the overflow estimate (e.g. $\sinh(30)/2$ halves the mantissa)
-- **Recursive-descent parser** — PEMDAS, right-associative `^`, implicit
-  multiplication, flat-arena AST `[AstNode; 64]`
+  display as `1.34406E+43`; binary operations adjust the overflow estimate
+- **Bytecode compiler** — same recursive-descent grammar, emits opcodes instead
+  of AST nodes; 12 opcodes, 256 B fixed-size buffer
 - **Complex numbers** — full arithmetic + analytic-continuation trig
+- **Matrix operations** — 4x4 max, determinant, inverse, transpose, cofactor,
+  adjugate, scalar broadcast, matrix multiplication
+- **Scientific notation mode** — `1.5E+10` syntax, ±99 exponent hard limit,
+  auto-conversion to Scalar when value fits Q31.32 exactly
 - **Log-space distributions** — ln_gamma (Stirling), ln_factorial
   (hybrid table/Stirling), binomial/Poisson PMF, chi-squared CDF
-- **275/275 host-side tests pass**, 6 pre-existing ignored
+- **300/300 host-side tests pass**, 6 pre-existing ignored
   (overflow/underflow at Q31.32 boundaries)
 
 ## Supported functions
 
-Arithmetic: `+ - * / ^ %`.
-
-Trigonometric: `sin cos tan asin acos atan`.
-
-Hyperbolic: `sinh cosh tanh asinh acosh atanh`.
-
-Other: `sqrt abs exp ln log log2 floor ceil round deg rad nthroot lngamma`.
-
-Distributions: `binomialprob poissonprob chisqcdf`.
-
-Loops: `sum int`.
-
-Storage: `sto`. Constants: `pi e`. Variables: `Ans A-Z`.
+**Arithmetic:** `+ - * / ^ %`. **Trigonometric:** `sin cos tan asin acos atan`.
+**Hyperbolic:** `sinh cosh tanh asinh acosh atanh`.
+**Other:** `sqrt abs exp ln log log2 floor ceil round deg rad nthroot lngamma`.
+**Distributions:** `binompp poissonp chicdf`. **Loops:** `sum int`.
+**Matrix:** `det transpose identity inv cofactor adjugate`.
+**Storage:** `sto`. **Constants:** `pi e`. **Variables:** `Ans A-Z` (scalar),
+`MatA MatB MatC` (matrix).
 
 See [Math Engine](/math-engine) for full reference.
 
+## Modes
+
+| Mode | Scope | Key features |
+|------|-------|-------------|
+| Standard | Arithmetic + transcendentals | All functions, real numbers only |
+| Advanced | Standard + complex | Imaginary unit `i`, complex arithmetic |
+| Matrix | Standard + matrix ops | Matrix literals `[(a,b)(c,d)]`, 4x4 limit |
+| Scientific | Standard + E-notation | `1.5E+10` literal syntax, exponent arithmetic |
+
+Cycle modes with `Esc` key.
+
 ## Firmware metrics
 
-| Metric                         | Value              | Budget   | Usage |
-|--------------------------------|--------------------|----------|-------|
-| Flash (.vector_table + .text)  | 44,559 bytes       | 64 KB    | 68.0% |
-| RAM (.bss + .stack)            | 5,272 bytes        | 8 KB     | 64.4% |
-| — Static data (within .bss)    | 2,200 bytes        | 8 KB     | 26.9% |
-| — Stack (reserved)             | 3,072 bytes        | 8 KB     | 37.5% |
-
-The `.stack` section (NOLOAD) is included in the `.bss` measurement by the `size`
-tool; actual static data is 2,200 bytes (end of `.bss` at `0x2000_0898`). The
-stack is reserved at 3 KB (`_stack_size = 3K`) in the linker script, growing
-downward from `0x2000_2000`.
+| Metric | Value | Budget | Usage |
+|--------|-------|--------|-------|
+| Flash (.text + .data) | 63,029 B | 64 KB | 96.2% |
+| SRAM (.data + .bss + .stack) | 4,312 B | 8 KB | 52.6% |
 
 ## Quick start
 
@@ -87,7 +93,7 @@ downward from `0x2000_2000`.
 # Build firmware (release, size-optimised)
 cargo build -p numcore-lm3s811 --release --target thumbv7m-none-eabi
 
-# Run host-side unit tests (275 tests)
+# Run host-side unit tests (300 tests)
 cargo test -p numcore_math --tests
 
 # Run in QEMU
@@ -95,7 +101,8 @@ qemu-system-arm -M lm3s811evb -serial mon:stdio -display none \
   -kernel target/thumbv7m-none-eabi/release/NumCore
 
 # Pipe expression
-echo "2+2" | cargo run -p numcore-lm3s811 --release --target thumbv7m-none-eabi
+echo "2+2" | timeout 5 qemu-system-arm -M lm3s811evb -serial stdio -display none \
+  -kernel target/thumbv7m-none-eabi/release/NumCore
 ```
 
 Source code: **[github.com/NumCore/NumCore](https://github.com/NumCore/NumCore)**

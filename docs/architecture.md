@@ -28,14 +28,12 @@ changes to `numcore/`.
 
 ```
   ┌───────────────────────────────────────────────────┐
-  │  Layer 8:  modes/                     [future]    │
-  ├───────────────────────────────────────────────────┤
   │  Layer 7:  ui/  (numcore/src/ui/)                 │
-  │  font.rs, formula.rs — rendering pipeline         │
+  │  font.rs, formula.rs, matrix_display.rs            │
   ├───────────────────────────────────────────────────┤
   │  Layer 6:  math/  (numcore/src/math/)             │
   │  fixed_point, complex, distributions,             │
-  │  lexer, parser, evaluator, engine, vars           │
+  │  lexer, compiler, vm, evaluator, engine, vars     │
   ├───────────────────────────────────────────────────┤
   │  Layer 5:  runtime/  (numcore/src/runtime/)       │
   │  mod.rs, state.rs, event.rs                       │
@@ -53,6 +51,20 @@ changes to `numcore/`.
 Layer 2 (traits) sits between Layers 4 and 5 logically, separating concrete
 HAL from architecture-agnostic code.
 
+## Evaluation pipeline
+
+Input processing follows a three-stage pipeline:
+
+```
+  input bytes ──► lexer ──► tokens ──► compiler ──► bytecode ──► vm ──► result
+```
+
+The lexer produces a flat `[Token; 64]` array. The compiler emits opcodes
+into a 256 B `Bytecode` buffer using the same recursive-descent grammar as the
+original parser but producing a linear program instead of an AST. The VM
+executes the bytecode in a flat `loop { match op { ... } }` with a 16-entry
+value stack on the C stack — no recursive calls, no fixed stack depth limit.
+
 ## Workspace structure
 
 ```
@@ -64,9 +76,10 @@ NumCore/
 │   └── src/
 │       ├── lib.rs                # Module re-exports
 │       ├── hal.rs                # Uart + Display traits
-│       ├── math/                 # 8 modules:
+│       ├── math/                 # 10 modules:
 │       │   fixed_point, complex, distrib, lexer,
-│       │   parser, evaluator, engine, vars
+│       │   parser (enums only), opcodes, compiler,
+│       │   vm, evaluator, engine, vars
 │       └── runtime/              # Event loop, CalcState
 ├── hal-lm3s811/                  # HAL crate (per-MCU)
 │   ├── Cargo.toml
@@ -76,13 +89,13 @@ NumCore/
 │       └── mmio.rs, uart.rs, i2c.rs, gpio.rs,
 │           clock.rs, oled.rs
 ├── numcore-lm3s811/              # Per-MCU binary crate
-│   ├── Cargo.toml
+│   ├── Cargo.toml                # version = "0.6.0"
 │   └── src/
-│       ├── main.rs               # Calls boot::Reset (via entry!)
+│       ├── main.rs               # Calls start()
 │       └── boot.rs               # Vector table, Reset handler
-    └── test-suite/                   # Host-side test crate
+    └── test-suite/               # Host-side test crate
         ├── Cargo.toml
-        └── tests/math.rs             # 281 tests (275 active)
+        └── tests/math.rs         # 300 tests
 ```
 
 | Member            | Target                  | Purpose                          |
@@ -114,14 +127,21 @@ create a new binary crate with `boot.rs` + `link.x`. No `numcore/` changes.
    registers. Q20.12 would give only $\sim3.6$ digits — insufficient for
    scientific use.
 
-2. **Static scratch buffers over stack allocation** — All scratch memory
-   (lexer output at 32 tokens, AST arena at 64 nodes, expression copy) lives
-   in `CalcState` (.bss). The AST arena alone is 3,088 B — larger than the
-   entire 3 KB stack reservation.
+2. **Bytecode over recursive AST** — The original recursive `evaluate_node`
+   used ~550 B per call frame and overflowed the 1,536 B stack at depth 4.
+   The bytecode VM uses a flat dispatch loop with a 16-entry explicit value
+   stack (2,304 B on the C stack). Expression depth is bounded by the value
+   stack size (16), not the call stack — no silent `.bss` corruption from
+   deep recursion.
 
-3. **No heap** — Zero dynamic allocation. All data structures are fixed-size
+3. **Static scratch buffers over stack allocation** — All scratch memory
+   (lexer output at 64 tokens, bytecode buffer at 256 B, expression copy)
+   lives in `CalcState` (.bss). The bytecode buffer (256 B) is 1,584 B smaller
+   than the old AST arena (1,840 B).
+
+4. **No heap** — Zero dynamic allocation. All data structures are fixed-size
    arrays sized at compile time. No OOM, no fragmentation, no allocator.
 
-4. **Trait-based HAL abstraction** — Shared `numcore/` depends only on `Uart`
+5. **Trait-based HAL abstraction** — Shared `numcore/` depends only on `Uart`
    and `Display`. Verified: the shared crate has no imports from any `hal-*`
    crate.
