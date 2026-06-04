@@ -11,16 +11,15 @@ export default function SimulatorLaunch() {
           onMouseEnter={(e) => (e.currentTarget.style.background = '#232340')}
           onMouseLeave={(e) => (e.currentTarget.style.background = '#1a1a2e')}
           style={{
-            border: '2px dashed #444',
+            border: '2px dashed #555',
             borderRadius: 8,
-            padding: '48px 24px',
+            padding: '40px 24px',
             cursor: 'pointer',
             background: '#1a1a2e',
             transition: 'background 0.2s',
           }}
         >
-          <div style={{ fontSize: 48, marginBottom: 12 }}>⌨</div>
-          <div style={{ fontSize: 18, color: '#e94560', fontWeight: 700, marginBottom: 8 }}>
+          <div style={{ fontSize: 14, color: '#e94560', fontWeight: 700, marginBottom: 8 }}>
             Launch NumCore Simulator
           </div>
           <div style={{ fontSize: 13, color: '#888' }}>
