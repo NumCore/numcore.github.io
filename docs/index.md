@@ -5,42 +5,9 @@ slug: /
 
 # NumCore
 
-<div align="center" id="simulator-container" style="position:relative;max-width:700px;margin:0 auto">
+import SimulatorLaunch from '@site/src/components/SimulatorLaunch';
 
-<!-- Simulator placeholder (shown before launch) -->
-<div id="simulator-placeholder" style="border:2px dashed #444;border-radius:8px;padding:48px 24px;cursor:pointer;background:#1a1a2e;transition:background 0.2s" onclick="launchSimulator()" onmouseover="this.style.background='#232340'" onmouseout="this.style.background='#1a1a2e'">
-  <div style="font-size:48px;margin-bottom:12px">&#9000;</div>
-  <div style="font-size:18px;color:#e94560;font-weight:700;margin-bottom:8px">Launch NumCore Simulator</div>
-  <div style="font-size:13px;color:#888">Run the full firmware math engine in your browser<br>No download required &middot; 429 KB &middot; Works offline</div>
-</div>
-
-<!-- Simulator iframe (hidden until launched) -->
-<iframe id="simulator-iframe" src="/simulator/index-standalone.html" width="700" height="600" title="NumCore Simulator"
-  style="border:none;border-radius:8px;max-width:100%;display:none"></iframe>
-
-<!-- Fullscreen button (hidden until launched) -->
-<button id="fs-button" onclick="toggleFullscreen()" style="display:none;position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid #555;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:13px;z-index:10">⛶ Fullscreen</button>
-
-</div>
-
-<script>
-function launchSimulator() {
-  var p = document.getElementById('simulator-placeholder');
-  var f = document.getElementById('simulator-iframe');
-  var b = document.getElementById('fs-button');
-  p.style.display = 'none';
-  f.style.display = 'block';
-  b.style.display = 'block';
-}
-function toggleFullscreen() {
-  var c = document.getElementById('simulator-container');
-  if (!document.fullscreenElement) {
-    c.requestFullscreen().catch(function(){});
-  } else {
-    document.exitFullscreen().catch(function(){});
-  }
-}
-</script>
+<SimulatorLaunch />
 
 **Bare-metal scientific calculator firmware** for the **LM3S811** ARM Cortex-M3
 (64 KB Flash, 8 KB SRAM), written in Rust with `#![no_std]` `#![no_main]`.
