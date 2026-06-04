@@ -9,6 +9,7 @@ import SimulatorLaunch from '@site/src/components/SimulatorLaunch';
 
 <SimulatorLaunch />
 
+<br />
 
 > **Note:** The simulator may not function correctly on mobile devices — for the best experience, use a PC.
 
