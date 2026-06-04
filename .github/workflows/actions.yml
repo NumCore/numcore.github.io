@@ -23,6 +23,15 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: Download WASM simulator from latest NumCore release
+        run: |
+          mkdir -p static/simulator
+          gh release download --repo NumCore/NumCore --pattern "index-standalone.html" \
+            --dir static/simulator/ 2>/dev/null || \
+            echo "::warning title=No simulator release::No index-standalone.html found in latest NumCore/NumCore release; skipping simulator embed"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - run: npm ci
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3

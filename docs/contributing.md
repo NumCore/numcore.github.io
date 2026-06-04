@@ -115,6 +115,8 @@ GitHub Actions runs on every PR:
 2. `cargo build --release --target thumbv7m-none-eabi` — firmware builds
 3. `cargo test -p numcore_math --tests` — 300 tests pass
 4. QEMU smoke tests via `test_inputs.txt`
+5. On merge to `main`: builds WASM simulator and attaches `index-standalone.html`
+   as a release asset alongside the firmware binary
 
 ## Pull request process
 
@@ -122,7 +124,9 @@ GitHub Actions runs on every PR:
 2. Run `cargo test -p numcore_math --tests` — all pass
 3. Run `make build` — firmware compiles
 4. Run in QEMU — existing functionality works
-5. Open a PR with clear description of what, why, and how tested
+5. If changing the math engine or UI rendering, verify with `make wasm-serve`
+   — the WASM simulator should reflect the behaviour
+6. Open a PR with clear description of what, why, and how tested
 
 ### Code review checklist
 

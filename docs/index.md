@@ -6,7 +6,8 @@ slug: /
 # NumCore
 
 <p align="center">
-  <img src="/img/demonstration.gif" alt="NumCore demonstration" />
+  <iframe src="/simulator/index-standalone.html" width="700" height="600" title="NumCore Simulator"
+    style="border:none;border-radius:8px;max-width:100%"></iframe>
 </p>
 
 **Bare-metal scientific calculator firmware** for the **LM3S811** ARM Cortex-M3
