@@ -63,7 +63,7 @@ description: Past milestones and future development plans
 
 - [ ] `.vscode/` configuration in repository
 - [ ] GDB init script for quick debugging setup
-- [ ] Release build CI artifact (GitHub Actions draft release)
+- [x] Release build CI artifact (GitHub Actions draft release)
 
 ## Medium-term
 
@@ -123,7 +123,7 @@ For each port: rewrite `hal/`, update `boot.rs` + `link.x`. Zero `numcore/` chan
 
 - [ ] Curriculum alignment (IB, A-level, AP, SAT)
 - [ ] Open source textbook companion
-- [ ] Web-based WASM simulator
+- [x] Web-based WASM simulator
 - [ ] Community port catalogue
 - [ ] Internationalisation (i18n)
 

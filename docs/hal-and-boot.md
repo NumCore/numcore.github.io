@@ -74,10 +74,9 @@ offset is 36 (accounting for the SSD0303 controller RAM layout).
 ```rust
 pub trait Uart {
     fn init();
-    fn putchar(c: u8);
-    fn getchar() -> u8;
+    fn transmit_bytes(bytes: &[u8]);
+    fn transmit_byte(byte: u8);
     fn poll_byte() -> Option<u8>;
-    fn transmit_bytes(buf: &[u8]);
 }
 ```
 
@@ -86,11 +85,12 @@ pub trait Uart {
 ```rust
 pub trait Display {
     type Buffer: AsMut<[u8]> + AsRef<[u8]>;
+    const WIDTH: usize;
+    const HEIGHT: usize;
     fn init();
     fn new_buffer() -> Self::Buffer;
-    fn clear();
-    fn render(buffer: &Self::Buffer);
-    fn set_pixel(x: usize, y: usize, on: bool);
+    fn render(fb: &Self::Buffer);
+    fn set_pixel(fb: &mut Self::Buffer, col: usize, row: usize, on: bool);
 }
 ```
 
@@ -104,3 +104,8 @@ To port NumCore to a new MCU:
 4. Add the new crate to the workspace `Cargo.toml` and the `Makefile`.
 
 No changes to the `numcore/` core crate are required.
+
+The WASM simulator (`hal-wasm/`) provides a browser-based `Uart` + `Display`
+implementation that runs the unmodified `numcore` crate through
+`wasm32-unknown-unknown`. It can be used as a reference for porting the HAL
+traits to new environments.

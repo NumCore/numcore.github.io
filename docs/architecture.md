@@ -71,7 +71,7 @@ value stack on the C stack — no recursive calls, no fixed stack depth limit.
 NumCore/
 ├── Cargo.toml                    # Workspace root
 ├── .cargo/config.toml            # No default target
-├── Makefile                      # build, test, clean
+├── Makefile                      # build, test, clean, wasm targets
 ├── numcore/                      # Shared crate (MCU-agnostic)
 │   └── src/
 │       ├── lib.rs                # Module re-exports
@@ -89,11 +89,16 @@ NumCore/
 │       └── mmio.rs, uart.rs, i2c.rs, gpio.rs,
 │           clock.rs, oled.rs
 ├── numcore-lm3s811/              # Per-MCU binary crate
-│   ├── Cargo.toml                # version = "0.6.0"
+│   ├── Cargo.toml                # version = "0.6.1"
 │   └── src/
 │       ├── main.rs               # Calls start()
 │       └── boot.rs               # Vector table, Reset handler
-    └── test-suite/               # Host-side test crate
+├── hal-wasm/                     # WASM simulator crate
+│   ├── Cargo.toml
+│   ├── build-single-html.py      # Packs WASM into offline HTML
+│   ├── src/lib.rs                # Uart+Display impls for browser
+│   └── www/                      # Web UI (HTML, JS, canvas, terminal)
+└── test-suite/                   # Host-side test crate
         ├── Cargo.toml
         └── tests/math.rs         # 300 tests
 ```
@@ -103,6 +108,7 @@ NumCore/
 | `numcore`         | any (host or embedded)  | MCU-agnostic lib                 |
 | `numcore-lm3s811` | `thumbv7m-none-eabi`    | Per-MCU binary                   |
 | `hal-lm3s811`     | `thumbv7m-none-eabi`    | LM3S811 HAL                      |
+| `hal-wasm`        | `wasm32-unknown-unknown`| Browser WASM simulator           |
 | `numcore_math`    | Host (x86_64)           | Host-side unit tests             |
 
 ## Portability

@@ -31,6 +31,19 @@ cargo check -p numcore-lm3s811 --release --target thumbv7m-none-eabi
 
 # Clean
 cargo clean
+
+# Build WASM browser simulator
+make wasm
+# or
+cargo build -p hal-wasm --target wasm32-unknown-unknown
+
+# Build + generate JS bindings + serve locally
+make wasm-serve
+# Open http://localhost:8080
+
+# Build standalone offline HTML file
+make wasm-standalone
+# target/wasm32-unknown-unknown/debug/index-standalone.html
 ```
 
 ### Release profile

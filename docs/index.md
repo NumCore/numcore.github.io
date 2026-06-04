@@ -5,9 +5,9 @@ slug: /
 
 # NumCore
 
-<p align="center">
-  <img src="/img/demonstration.gif" alt="NumCore demonstration" />
-</p>
+import SimulatorLaunch from '@site/src/components/SimulatorLaunch';
+
+<SimulatorLaunch />
 
 **Bare-metal scientific calculator firmware** for the **LM3S811** ARM Cortex-M3
 (64 KB Flash, 8 KB SRAM), written in Rust with `#![no_std]` `#![no_main]`.
